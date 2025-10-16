@@ -1,0 +1,69 @@
+services:
+  # База данных PostgreSQL
+  trials-db:
+    image: postgres:14-alpine
+    container_name: trials_postgres
+    restart: always
+    ports:
+      - "5433:5432"  # Используем 5433 чтобы не конфликтовать с основной БД
+    environment:
+      - POSTGRES_USER=admin
+      - POSTGRES_PASSWORD=qwe1daSjewspds12
+      - POSTGRES_DB=trials_db
+    volumes:
+      - trials_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U admin -d trials_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Микросервис Trials
+  trials-service:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: trials_service
+    command: >
+      sh -c "
+        echo '⏳ Ожидание БД...' &&
+        python manage.py wait_for_db &&
+        echo '🔄 Применение миграций...' &&
+        python manage.py migrate --noinput &&
+        echo '🚀 Запуск сервиса...' &&
+        python manage.py runserver 0.0.0.0:8001
+      "
+    volumes:
+      - .:/usr/src/app/
+      - ./volumes/media:/media
+    ports:
+      - "8001:8001"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"  # Доступ к хост-машине
+    networks:
+      - default
+      - patents-backend_default  # Подключение к сети Patents Service
+    environment:
+      - DEBUG=1
+      - MODE=dev
+      - HOST_NAME=localhost
+      - SECRET_KEY=trials-secret-key-change-in-production
+      - SQL_ENGINE=django.db.backends.postgresql
+      - SQL_DATABASE=trials_db
+      - SQL_USER=admin
+      - SQL_PASSWORD=qwe1daSjewspds12
+      - SQL_HOST=trials-db
+      - SQL_PORT=5432
+      - PATENTS_SERVICE_URL=http://patents-backend-web-1:8000
+      - PATENTS_SERVICE_USERNAME=admin
+      - PATENTS_SERVICE_PASSWORD=Fx!46hu
+    depends_on:
+      trials-db:
+        condition: service_healthy
+
+networks:
+  patents-backend_default:
+    external: true  # Внешняя сеть от Patents Service
+
+volumes:
+  trials_postgres_data:

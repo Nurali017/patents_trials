@@ -1,0 +1,40 @@
+# Crontab для автоматической синхронизации Trials Service
+# Формат: минута час день месяц день_недели команда
+
+# ============================================================
+# ЕЖЕДНЕВНАЯ СИНХРОНИЗАЦИЯ
+# ============================================================
+
+# Синхронизация сортов (устаревшие >7 дней) - каждую ночь в 2:00
+0 2 * * * cd /usr/src/app && python manage.py sync_from_patents --model=sorts --outdated-only --days=7 >> /var/log/trials-sync.log 2>&1
+
+# Проверка здоровья системы - каждое утро в 9:00
+0 9 * * * cd /usr/src/app && python manage.py check_sync_health >> /var/log/trials-health.log 2>&1
+
+# ============================================================
+# ЕЖЕНЕДЕЛЬНАЯ СИНХРОНИЗАЦИЯ (Воскресенье)
+# ============================================================
+
+# Синхронизация культур (устаревшие >30 дней) - воскресенье в 3:00
+0 3 * * 0 cd /usr/src/app && python manage.py sync_from_patents --model=cultures --outdated-only --days=30 >> /var/log/trials-sync.log 2>&1
+
+# Синхронизация оригинаторов (устаревшие >30 дней) - воскресенье в 4:00
+0 4 * * 0 cd /usr/src/app && python manage.py sync_from_patents --model=originators --outdated-only --days=30 >> /var/log/trials-sync.log 2>&1
+
+# ============================================================
+# ЕЖЕМЕСЯЧНАЯ СИНХРОНИЗАЦИЯ (1-го числа)
+# ============================================================
+
+# Полная синхронизация сортов - 1-го числа в 5:00
+0 5 1 * * cd /usr/src/app && python manage.py sync_from_patents --model=sorts >> /var/log/trials-sync.log 2>&1
+
+# ============================================================
+# ЛОГИ
+# ============================================================
+# Просмотр логов:
+#   tail -f /var/log/trials-sync.log
+#   tail -f /var/log/trials-health.log
+#
+# Ручной запуск:
+#   docker exec trials_service python manage.py sync_from_patents --model=sorts --outdated-only --days=7
+
