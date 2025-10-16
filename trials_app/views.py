@@ -2338,12 +2338,12 @@ class TrialPlanViewSet(viewsets.ModelViewSet):
             'applications': result
         })
     
-    @action(detail=True, methods=['post'], url_path='add-participants')
-    def add_participants(self, request, pk=None):
+    @action(detail=True, methods=['post'], url_path='cultures/(?P<culture_id>[^/.]+)/trial-types/(?P<trial_type_id>[^/.]+)/add-participants')
+    def add_participants(self, request, pk=None, culture_id=None, trial_type_id=None):
         """
-        Добавить участников в план
+        Добавить участников к типу испытания культуры в плане
         
-        POST /api/v1/trial-plans/{id}/add-participants/
+        POST /api/trial-plans/{id}/cultures/{culture_id}/trial-types/{trial_type_id}/add-participants/
         {
             "participants": [
                 {
@@ -2357,8 +2357,7 @@ class TrialPlanViewSet(viewsets.ModelViewSet):
                             "region_id": 1,
                             "predecessor": "fallow",  // или culture_id (например: 5)
                             "seeding_rate": 4.5,
-                            "season": "spring",  // опционально, подставляется из плана
-                            "trial_type": 2  // опционально, подставляется из плана
+                            "season": "spring"  // опционально, подставляется из культуры
                         }
                     ]
                 }
@@ -2366,6 +2365,32 @@ class TrialPlanViewSet(viewsets.ModelViewSet):
         }
         """
         trial_plan = self.get_object()
+        
+        # Проверяем что культура существует в плане
+        try:
+            trial_plan_culture = TrialPlanCulture.objects.get(
+                trial_plan=trial_plan,
+                culture_id=culture_id,
+                is_deleted=False
+            )
+        except TrialPlanCulture.DoesNotExist:
+            return Response(
+                {'error': 'Культура не найдена в плане'}, 
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        # Проверяем что тип испытания существует для этой культуры
+        try:
+            culture_trial_type = TrialPlanCultureTrialType.objects.get(
+                trial_plan_culture=trial_plan_culture,
+                trial_type_id=trial_type_id,
+                is_deleted=False
+            )
+        except TrialPlanCultureTrialType.DoesNotExist:
+            return Response(
+                {'error': 'Тип испытания не найден для данной культуры в плане'}, 
+                status=status.HTTP_404_NOT_FOUND
+            )
         
         serializer = TrialPlanAddParticipantsSerializer(data=request.data)
         if serializer.is_valid():
@@ -2409,7 +2434,7 @@ class TrialPlanViewSet(viewsets.ModelViewSet):
                 
                 # ✅ ПРОВЕРКА: Если участник с таким сортом уже существует, используем его
                 existing_participant = TrialPlanParticipant.objects.filter(
-                    trial_plan=trial_plan,
+                    culture_trial_type=culture_trial_type,
                     patents_sort_id=sort_id,
                     is_deleted=False
                 ).first()
@@ -2421,14 +2446,14 @@ class TrialPlanViewSet(viewsets.ModelViewSet):
                     # Создаем нового участника
                     # Автоматически генерируем participant_number (следующий доступный номер)
                     max_number = TrialPlanParticipant.objects.filter(
-                        trial_plan=trial_plan,
+                        culture_trial_type=culture_trial_type,
                         is_deleted=False
                     ).aggregate(max_num=django_models.Max('participant_number'))['max_num'] or 0
                     participant_number = max_number + 1
                     
                     try:
                         participant = TrialPlanParticipant.objects.create(
-                            trial_plan=trial_plan,
+                            culture_trial_type=culture_trial_type,
                             patents_sort_id=p_data['patents_sort_id'],
                             statistical_group=p_data.get('statistical_group', 1),
                             seeds_provision=p_data.get('seeds_provision', 'not_provided'),
@@ -2465,12 +2490,7 @@ class TrialPlanViewSet(viewsets.ModelViewSet):
                         }, status=400)
                     
                     # Подставляем дефолты с плана если не переданы
-                    trial_season = trial_data.get('season', trial_plan.season)
-                    trial_type_id = trial_data.get('trial_type')
-                    
-                    # Если trial_type не передан, берем из плана
-                    if trial_type_id is None and trial_plan.trial_type:
-                        trial_type_id = trial_plan.trial_type.id
+                    trial_season = trial_data.get('season', culture_trial_type.season)
                     
                     try:
                         trial = TrialPlanTrial.objects.create(
@@ -2479,7 +2499,6 @@ class TrialPlanViewSet(viewsets.ModelViewSet):
                             predecessor=predecessor,
                             seeding_rate=seeding_rate,
                             season=trial_season,
-                            trial_type_id=trial_type_id,
                             created_by=request.user
                         )
                     except Exception as e:

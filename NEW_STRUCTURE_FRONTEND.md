@@ -104,7 +104,7 @@
 
 ### Шаг 4️⃣: Добавить участника (сорт) в тип испытания
 
-**Endpoint:** `POST /api/trial-plans/{plan_id}/cultures/{culture_id}/trial-types/{trial_type_id}/add-participant/`
+**Endpoint:** `POST /api/trial-plans/{plan_id}/cultures/{culture_id}/trial-types/{trial_type_id}/add-participants/`
 
 ```json
 {
