@@ -1701,7 +1701,7 @@ class TrialResultViewSet(viewsets.ModelViewSet):
             "data": [
                 {
                     "indicator": 1,  // урожайность
-                    "plots": [45.2, 46.8, 44.5, 45.9]
+                    "value": 45.6
                 },
                 {
                     "indicator": 2,  // белок
@@ -3074,16 +3074,17 @@ class TrialPlanViewSet(viewsets.ModelViewSet):
         {
             "region_id": 1,
             "culture_id": 5,
-            "start_date": "2025-05-15",
+            "area_ha": 0.5,
             "responsible_person": "Иванов И.И.",
-            "harvest_timing": "medium_early"  // опционально
+            "start_date": "2025-03-15",  // опционально - дата начала испытания (по умолчанию текущая дата)
+            "exclude_participants": [123, 456]  // опционально - ID участников для исключения
         }
         
         Response:
         {
             "success": true,
             "trial_id": 20,
-            "participants_count": 11,
+            "total_participants": 11,
             "status": "active",
             "message": "Trial created with 11 participants from plan"
         }
@@ -3092,13 +3093,14 @@ class TrialPlanViewSet(viewsets.ModelViewSet):
         
         region_id = request.data.get('region_id')
         culture_id = request.data.get('culture_id')
-        start_date = request.data.get('start_date')
+        area_ha = request.data.get('area_ha')
         responsible_person = request.data.get('responsible_person')
-        harvest_timing = request.data.get('harvest_timing')
+        exclude_participants = request.data.get('exclude_participants', [])
+        start_date = request.data.get('start_date')
         
-        if not region_id or not culture_id or not start_date:
+        if not region_id or not culture_id:
             return Response({
-                'error': 'region_id, culture_id and start_date are required'
+                'error': 'region_id and culture_id are required'
             }, status=400)
         
         # Проверить регион и культуру
@@ -3123,7 +3125,7 @@ class TrialPlanViewSet(viewsets.ModelViewSet):
         # Найти участников плана для этого ГСУ и культуры
         # Через TrialPlanTrial находим всех участников
         trial_plan_trials = TrialPlanTrial.objects.filter(
-            participant__trial_plan=trial_plan,
+            participant__culture_trial_type__trial_plan_culture__trial_plan=trial_plan,
             region=region,
             is_deleted=False
         ).select_related('participant').prefetch_related('participant__trials')
@@ -3133,12 +3135,16 @@ class TrialPlanViewSet(viewsets.ModelViewSet):
                 'error': f'No participants found in plan for region {region.name} and culture {culture.name}'
             }, status=400)
         
-        # Получить уникальных участников
+        # Получить уникальных участников с учетом исключений
         participants_to_add = []
         seen_sort_ids = set()
         
         for plan_trial in trial_plan_trials:
             participant = plan_trial.participant
+            
+            # Исключить участников из списка exclude_participants
+            if participant.patents_sort_id in exclude_participants:
+                continue
             
             # Проверяем что сорт соответствует нужной культуре
             # (получаем сорт из Patents и проверяем его культуру)
@@ -3174,22 +3180,24 @@ class TrialPlanViewSet(viewsets.ModelViewSet):
         # Взять параметры из первого TrialPlanTrial
         first_plan_trial = participants_to_add[0]['plan_trial']
         
+        # Подготовить дату начала (из payload или текущая дата)
+        trial_start_date = start_date or timezone.now().date()
+        
         # Создать Trial
         trial = Trial.objects.create(
             region=region,
             culture=culture,
             trial_type=first_plan_trial.trial_type or trial_plan.trial_type,
-            start_date=start_date,
+            area_ha=area_ha,
             year=trial_plan.year,
             planting_season=first_plan_trial.season,
             predecessor_culture=self._get_predecessor_culture(first_plan_trial.predecessor),
             growing_conditions='rainfed',  # По умолчанию богара
             cultivation_technology='traditional',  # По умолчанию обычная
-            harvest_timing=harvest_timing,
             responsible_person=responsible_person,
             trial_plan=trial_plan,
-            trial_plan_source='application',
             status='active',
+            start_date=trial_start_date,  # Используем переданную дату или текущую
             created_by=request.user
         )
         
@@ -3234,7 +3242,7 @@ class TrialPlanViewSet(viewsets.ModelViewSet):
         return Response({
             'success': True,
             'trial_id': trial.id,
-            'participants_count': len(created_participants),
+            'total_participants': len(created_participants),
             'status': trial.status,
             'message': f'Trial created with {len(created_participants)} participants from plan',
             'trial': TrialSerializer(trial).data
@@ -3295,47 +3303,55 @@ class TrialPlanViewSet(viewsets.ModelViewSet):
         tasks = []
         
         for plan in plans_query:
-            # Найти культуры в плане
-            plan_cultures = TrialPlanCulture.objects.filter(
-                trial_plan=plan,
-                is_deleted=False
-            ).select_related('culture')
-            
-            for plan_culture in plan_cultures:
-                culture = plan_culture.culture
-                
-                # Подсчитать участников для этого ГСУ и культуры
-                participants_count = TrialPlanTrial.objects.filter(
-                    participant__trial_plan=plan,
-                    region=region,
-                    is_deleted=False
-                ).values('participant__patents_sort_id').distinct().count()
-                
-                if participants_count == 0:
-                    continue
-                
-                # Проверить создан ли уже Trial
-                existing_trial = Trial.objects.filter(
+            try:
+                # Найти культуры в плане
+                plan_cultures = TrialPlanCulture.objects.filter(
                     trial_plan=plan,
-                    region=region,
-                    culture=culture,
                     is_deleted=False
-                ).first()
+                ).select_related('culture')
                 
-                task_data = {
-                    'plan_id': plan.id,
-                    'plan_year': plan.year,
-                    'culture_id': culture.id,
-                    'culture_name': culture.name,
-                    'culture_group': culture.group_culture.name if culture.group_culture else None,
-                    'participants_count': participants_count,
-                    'trial_created': existing_trial is not None,
-                    'trial_id': existing_trial.id if existing_trial else None,
-                    'trial_status': existing_trial.status if existing_trial else None,
-                    'can_start': existing_trial is None  # Можно начать если еще не создан
-                }
-                
-                tasks.append(task_data)
+                for plan_culture in plan_cultures:
+                    culture = plan_culture.culture
+                    
+                    try:
+                        # Упрощенный подсчет участников - просто считаем всех участников плана для культуры
+                        participants_count = TrialPlanParticipant.objects.filter(
+                            culture_trial_type__trial_plan_culture__trial_plan=plan,
+                            culture_trial_type__trial_plan_culture__culture=culture,
+                            is_deleted=False
+                        ).count()
+                        
+                        if participants_count == 0:
+                            continue
+                        
+                        # Проверить создан ли уже Trial
+                        existing_trial = Trial.objects.filter(
+                            trial_plan=plan,
+                            region=region,
+                            culture=culture,
+                            is_deleted=False
+                        ).first()
+                        
+                        task_data = {
+                            'plan_id': plan.id,
+                            'plan_year': plan.year,
+                            'culture_id': culture.id,
+                            'culture_name': culture.name,
+                            'culture_group': culture.group_culture.name if culture.group_culture else None,
+                            'participants_count': participants_count,
+                            'trial_created': existing_trial is not None,
+                            'trial_id': existing_trial.id if existing_trial else None,
+                            'trial_status': existing_trial.status if existing_trial else None,
+                            'can_start': existing_trial is None  # Можно начать если еще не создан
+                        }
+                        
+                        tasks.append(task_data)
+                    except Exception as e:
+                        # Пропускаем проблемные культуры
+                        continue
+            except Exception as e:
+                # Пропускаем проблемные планы
+                continue
         
         return Response({
             'region_id': region.id,

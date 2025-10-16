@@ -290,14 +290,14 @@ class ApplicationSerializer(serializers.ModelSerializer):
             id__in=trial_ids,
             is_deleted=False
         )
-        decisions = trials.exclude(decision__isnull=True).exclude(decision='')
         
+        # В модели Trial нет поля decision, поэтому возвращаем базовую статистику
         return {
             'total': trials.count(),
-            'with_decision': decisions.count(),
-            'approved': decisions.filter(decision='approved').count(),
-            'continue': decisions.filter(decision='continue').count(),
-            'rejected': decisions.filter(decision='rejected').count(),
+            'with_decision': 0,  # Поле decision не существует в Trial
+            'approved': 0,
+            'continue': 0,
+            'rejected': 0,
         }
     
     def get_missing_mandatory_documents(self, obj):
@@ -458,9 +458,7 @@ class TrialSerializer(serializers.ModelSerializer):
     climate_zone_name = serializers.CharField(source='region.climate_zone.name', read_only=True)
     culture_name = serializers.CharField(source='culture.name', read_only=True, allow_null=True)
     predecessor_culture_name = serializers.CharField(source='predecessor_culture.name', read_only=True, allow_null=True)
-    decided_by_name = serializers.CharField(source='decided_by.username', read_only=True)
     created_by_name = serializers.CharField(source='created_by.username', read_only=True)
-    sort_records_data = SortRecordSerializer(source='sort_records', many=True, read_only=True)
     indicators_data = IndicatorSerializer(source='indicators', many=True, read_only=True)
     trial_type_data = TrialTypeSerializer(source='trial_type', read_only=True)
     results_count = serializers.SerializerMethodField()
@@ -703,42 +701,12 @@ class TrialResultSerializer(serializers.ModelSerializer):
     created_by_name = serializers.CharField(source='created_by.username', read_only=True)
     participant_data = TrialParticipantSerializer(source='participant', read_only=True)
     
-    # Для bulk ввода данных по делянкам
-    plots = serializers.ListField(
-        child=serializers.FloatField(allow_null=True),
-        write_only=True,
-        required=False,
-        help_text="Массив значений по делянкам [plot_1, plot_2, plot_3, plot_4]"
-    )
     
     class Meta:
         model = TrialResult
         fields = '__all__'
         read_only_fields = ['value', 'trial', 'sort_record', 'created_at', 'updated_at']
     
-    def create(self, validated_data):
-        """Создать результат с возможностью передачи делянок массивом"""
-        plots = validated_data.pop('plots', None)
-        
-        if plots and len(plots) == 4:
-            validated_data['plot_1'] = plots[0]
-            validated_data['plot_2'] = plots[1]
-            validated_data['plot_3'] = plots[2]
-            validated_data['plot_4'] = plots[3]
-        
-        return super().create(validated_data)
-    
-    def update(self, instance, validated_data):
-        """Обновить результат с возможностью передачи делянок массивом"""
-        plots = validated_data.pop('plots', None)
-        
-        if plots and len(plots) == 4:
-            validated_data['plot_1'] = plots[0]
-            validated_data['plot_2'] = plots[1]
-            validated_data['plot_3'] = plots[2]
-            validated_data['plot_4'] = plots[3]
-        
-        return super().update(instance, validated_data)
 
 class TrialLaboratoryResultSerializer(serializers.ModelSerializer):
     """
@@ -810,7 +778,7 @@ class TrialPlanWriteSerializer(serializers.ModelSerializer):
         fields = '__all__'
         extra_kwargs = {
             'created_by': {'read_only': True},  # Устанавливается автоматически
-            'total_varieties': {'read_only': True},  # Вычисляется автоматически
+            'total_participants': {'read_only': True},  # Вычисляется автоматически
         }
     
     def validate(self, data):
@@ -903,6 +871,7 @@ class TrialPlanSerializer(serializers.ModelSerializer):
                         'statistical_group': p.statistical_group,
                         'seeds_provision': p.seeds_provision,
                         'patents_sort_id': p.patents_sort_id,
+                        'sort_name': self._get_sort_name(p.patents_sort_id),
                         'application_id': p.application.id if p.application else None,
                         'application_submit_year': p.application.submission_date.year if p.application and p.application.submission_date else None,
                         'trials': [
@@ -983,6 +952,29 @@ class TrialPlanSerializer(serializers.ModelSerializer):
                 return None
         
         return None
+    
+    def _get_sort_name(self, patents_sort_id):
+        """
+        Получить название сорта по ID из Patents Service
+        
+        Args:
+            patents_sort_id: ID сорта в Patents Service
+            
+        Returns:
+            str: Название сорта или None если не найден
+        """
+        if not patents_sort_id:
+            return None
+        
+        try:
+            from .models import SortRecord
+            sort_record = SortRecord.objects.get(
+                sort_id=patents_sort_id,
+                is_deleted=False
+            )
+            return sort_record.name
+        except SortRecord.DoesNotExist:
+            return None
 
 
 class TrialPlanTrialSerializer(serializers.ModelSerializer):

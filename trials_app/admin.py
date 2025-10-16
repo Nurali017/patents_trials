@@ -246,16 +246,16 @@ class PlannedDistributionAdmin(admin.ModelAdmin):
 
 @admin.register(Trial)
 class TrialAdmin(admin.ModelAdmin):
-    list_display = ['__str__', 'culture', 'trial_type', 'region', 'area_ha', 'status', 'laboratory_status', 'decision', 'harvest_date', 'responsible_person', 'start_date']
-    search_fields = ['description', 'sort_records__name', 'region__name', 'laboratory_code']
-    list_filter = ['status', 'laboratory_status', 'trial_type', 'planting_season', 'decision', 'region__oblast', 'culture', 'growing_conditions', 'start_date', 'created_at', 'is_deleted']
-    filter_horizontal = ['sort_records', 'indicators']
+    list_display = ['__str__', 'culture', 'trial_type', 'region', 'area_ha', 'status', 'laboratory_status', 'harvest_date', 'responsible_person', 'start_date']
+    search_fields = ['region__name']
+    list_filter = ['status', 'laboratory_status', 'trial_type', 'planting_season', 'region__oblast', 'culture', 'growing_conditions', 'start_date', 'created_at', 'is_deleted']
+    filter_horizontal = ['indicators']
     date_hierarchy = 'start_date'
     readonly_fields = ['created_at', 'updated_at']
     
     fieldsets = (
         ('Основная информация', {
-            'fields': ('description', 'status', 'culture')
+            'fields': ('status', 'culture')
         }),
         ('Тип испытания и площадь', {
             'fields': ('trial_type', 'area_ha', 'planting_season')
@@ -267,21 +267,17 @@ class TrialAdmin(admin.ModelAdmin):
             'fields': ('predecessor_culture', 'agro_background', 'growing_conditions', 'cultivation_technology', 'growing_method', 'harvest_timing', 'harvest_date', 'additional_info'),
             'classes': ('collapse',)
         }),
-        ('Сорта и показатели', {
-            'fields': ('sort_records', 'indicators'),
+        ('Показатели', {
+            'fields': ('indicators',),
             'classes': ('collapse',)
         }),
         ('Лабораторные анализы', {
-            'fields': ('laboratory_status', 'laboratory_code', 'laboratory_sent_date', 'laboratory_completed_date', 'laboratory_sample_weight', 'laboratory_sample_source', 'laboratory_notes'),
+            'fields': ('laboratory_status', 'laboratory_sent_date', 'laboratory_completed_date', 'laboratory_sample_weight', 'laboratory_sample_source', 'laboratory_notes'),
             'classes': ('collapse',),
             'description': 'Информация о лабораторных анализах качественных показателей'
         }),
         ('Даты', {
             'fields': ('start_date',)
-        }),
-        ('Решение', {
-            'fields': ('decision', 'decision_justification', 'decision_recommendations', 'decision_date', 'decided_by'),
-            'classes': ('collapse',)
         }),
         ('Системные поля', {
             'fields': ('created_by', 'created_at', 'updated_at', 'is_deleted', 'deleted_at'),
@@ -312,7 +308,7 @@ class TrialParticipantAdmin(admin.ModelAdmin):
 
 @admin.register(TrialResult)
 class TrialResultAdmin(admin.ModelAdmin):
-    list_display = ['participant', 'indicator', 'value', 'plot_1', 'plot_2', 'plot_3', 'plot_4', 'measurement_date', 'created_at']
+    list_display = ['participant', 'indicator', 'value', 'measurement_date', 'created_at']
     search_fields = ['participant__sort_record__name', 'indicator__name', 'participant__trial__region__name']
     list_filter = ['measurement_date', 'participant__trial__region', 'indicator', 'created_at', 'is_deleted']
     date_hierarchy = 'measurement_date'
@@ -322,9 +318,9 @@ class TrialResultAdmin(admin.ModelAdmin):
         ('Основная информация', {
             'fields': ('participant', 'indicator', 'measurement_date')
         }),
-        ('Данные по делянкам', {
-            'fields': ('plot_1', 'plot_2', 'plot_3', 'plot_4', 'value'),
-            'description': 'Если делянки заполнены, value рассчитывается автоматически'
+        ('Данные результатов', {
+            'fields': ('value',),
+            'description': 'Значение показателя'
         }),
         ('Текстовое значение', {
             'fields': ('text_value', 'notes'),

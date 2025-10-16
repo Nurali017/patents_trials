@@ -1044,18 +1044,8 @@ class Trial(SoftDeleteModel):
         ('lab_sample_sent', 'Образец в лаборатории'),
         ('lab_completed', 'Лабораторный анализ завершен'),
         ('completed', 'Завершено'),
-        ('approved', 'Одобрено'),
-        ('continue', 'Продолжить'),
-        ('rejected', 'Отклонено'),
     ]
     
-    DECISION_CHOICES = [
-        ('approved', 'Одобрено - рекомендовать к включению в реестр'),
-        ('continue', 'Продолжить испытания - требуются дополнительные данные'),
-        ('rejected', 'Отклонено - не соответствует требованиям'),
-    ]
-    
-    description = models.TextField(blank=True, null=True)
     region = models.ForeignKey(Region, on_delete=models.CASCADE, related_name='trials')
     
     # Тип и площадь испытания
@@ -1193,12 +1183,6 @@ class Trial(SoftDeleteModel):
         help_text="Дополнительные примечания"
     )
     
-    # Для обратной совместимости (если испытание без заявки)
-    sort_records = models.ManyToManyField(
-        SortRecord, 
-        related_name='trials',
-        blank=True
-    )
     
     indicators = models.ManyToManyField(Indicator, related_name='trials')
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='planned')
@@ -1218,37 +1202,6 @@ class Trial(SoftDeleteModel):
         help_text="ФИО ответственного сортопыта"
     )
     
-    # Решение по испытанию
-    decision = models.CharField(
-        max_length=20, 
-        choices=DECISION_CHOICES,
-        null=True, 
-        blank=True,
-        help_text="Решение комиссии по итогам испытания"
-    )
-    decision_justification = models.TextField(
-        null=True, 
-        blank=True,
-        help_text="Обоснование решения"
-    )
-    decision_recommendations = models.TextField(
-        null=True,
-        blank=True,
-        help_text="Рекомендации комиссии"
-    )
-    decision_date = models.DateField(
-        null=True, 
-        blank=True,
-        help_text="Дата принятия решения"
-    )
-    decided_by = models.ForeignKey(
-        User, 
-        on_delete=models.SET_NULL, 
-        null=True, 
-        blank=True,
-        related_name='decided_trials',
-        help_text="Кто принял решение"
-    )
     
     # === Лабораторные анализы ===
     laboratory_status = models.CharField(
@@ -1262,12 +1215,6 @@ class Trial(SoftDeleteModel):
         null=True,
         blank=True,
         help_text="Статус лабораторных анализов"
-    )
-    laboratory_code = models.CharField(
-        max_length=100,
-        blank=True,
-        null=True,
-        help_text="Код пробы в лаборатории (LAB-2025-001-ALM)"
     )
     laboratory_sent_date = models.DateField(
         null=True,
@@ -1304,17 +1251,6 @@ class Trial(SoftDeleteModel):
         related_name='trials',
         help_text="План, из которого создано испытание"
     )
-    trial_plan_source = models.CharField(
-        max_length=20,
-        choices=[
-            ('application', 'Из заявки'),
-            ('registry', 'Из реестра'),
-            ('manual', 'Ручное создание')
-        ],
-        null=True,
-        blank=True,
-        help_text="Источник создания испытания"
-    )
     
     # Метаданные
     created_by = models.ForeignKey(User, on_delete=models.CASCADE, related_name='created_trials')
@@ -1339,8 +1275,9 @@ class Trial(SoftDeleteModel):
         super().save(*args, **kwargs)
     
     def get_sort_record(self):
-        """Получить сорт (через sort_records)"""
-        return self.sort_records.first() if self.sort_records.exists() else None
+        """Получить сорт (через participants)"""
+        first_participant = self.participants.first()
+        return first_participant.sort_record if first_participant else None
     
     def get_standard_participants(self):
         """Получить стандартные сорта в опыте"""
@@ -1389,30 +1326,19 @@ class Trial(SoftDeleteModel):
         if not results:
             return None
         
-        # Собрать делянки
-        plots = [results.plot_1, results.plot_2, results.plot_3, results.plot_4]
-        plots = [p for p in plots if p is not None]
-        
-        if len(plots) < 2:
+        # Используем только итоговое значение
+        if results.value is None:
             return None
         
-        # Среднее
-        mean = sum(plots) / len(plots)
+        # Для упрощенной статистики используем только value
+        # В реальной системе статистика рассчитывается по множественным испытаниям
+        mean = results.value
         
-        # Стандартное отклонение (Sx)
-        variance = sum((x - mean) ** 2 for x in plots) / (len(plots) - 1)
-        sx = math.sqrt(variance)
-        
-        # Точность опыта (P%)
-        accuracy = (sx / mean * 100) if mean != 0 else 0
-        
-        # НСР (для t=2.78 при 4 повторностях)
-        n = len(plots)
-        t_value = 2.78  # t-критерий для 4 повторностей
-        lsd = t_value * math.sqrt(2 * sx ** 2 / n) if n > 0 else 0
-        
-        # Ошибка средней (E)
-        error_mean = sx / math.sqrt(n) if n > 0 else 0
+        # Упрощенные значения (требуют доработки для реальной статистики)
+        sx = 0  # Стандартное отклонение - требует множественных измерений
+        accuracy = 0  # Точность опыта - требует множественных измерений
+        lsd = 0  # НСР - требует множественных измерений
+        error_mean = 0  # Ошибка средней - требует множественных измерений
         
         return {
             'sx': round(sx, 2),
@@ -1694,27 +1620,6 @@ class TrialResult(SoftDeleteModel):
         help_text="Среднее значение или общее значение"
     )
     
-    # Данные по делянкам (опционально, для урожайности и др.)
-    plot_1 = models.FloatField(
-        null=True,
-        blank=True,
-        help_text="Делянка 1"
-    )
-    plot_2 = models.FloatField(
-        null=True,
-        blank=True,
-        help_text="Делянка 2"
-    )
-    plot_3 = models.FloatField(
-        null=True,
-        blank=True,
-        help_text="Делянка 3"
-    )
-    plot_4 = models.FloatField(
-        null=True,
-        blank=True,
-        help_text="Делянка 4"
-    )
     
     # Текстовое значение (для качественных показателей)
     text_value = models.TextField(
@@ -1769,14 +1674,7 @@ class TrialResult(SoftDeleteModel):
         return f"{self.participant.sort_record.name} - {self.indicator.name}: {self.value}"
     
     def save(self, *args, **kwargs):
-        """Автоматически рассчитать среднее из делянок"""
-        plots = [self.plot_1, self.plot_2, self.plot_3, self.plot_4]
-        filled_plots = [p for p in plots if p is not None]
-        
-        # Если делянки заполнены, рассчитываем среднее
-        if filled_plots:
-            self.value = sum(filled_plots) / len(filled_plots)
-        
+        """Сохранение результата"""
         # Для обратной совместимости
         if self.participant:
             self.trial = self.participant.trial
@@ -2035,9 +1933,9 @@ class TrialPlan(SoftDeleteModel):
     )
     # culture убрано - теперь через TrialPlanCulture
     
-    total_varieties = models.IntegerField(
+    total_participants = models.IntegerField(
         default=0,
-        help_text="Общее количество сортов в плане"
+        help_text="Общее количество участников в плане"
     )
     
     # Статус плана
@@ -2109,7 +2007,7 @@ class TrialPlan(SoftDeleteModel):
     
     def update_statistics(self):
         """Обновить статистику плана"""
-        self.total_varieties = self.get_participants_count()
+        self.total_participants = self.get_participants_count()
         self.save()
 
 
@@ -2142,7 +2040,7 @@ class TrialPlanParticipant(SoftDeleteModel):
             ('provided', 'Предоставлены'),
             ('not_provided', 'Не предоставлены'),
         ],
-        default='not_provided',
+        default='provided',
         help_text="Обеспеченность семенами"
     )
     participant_number = models.IntegerField(help_text="Номер участника в плане")
