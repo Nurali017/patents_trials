@@ -17,7 +17,9 @@ router.register(r'trial-types', views.TrialTypeViewSet)
 # router.register(r'sort-records', views.SortRecordViewSet)
 
 # Основные сущности
-router.register(r'trial-plans', views.TrialPlanViewSet)  # Планы испытаний
+router.register(r'trial-plans', views.TrialPlanViewSet)
+
+# API для расчетов (удалено)
 router.register(r'applications', views.ApplicationViewSet)  # Заявки на испытания
 router.register(r'trials', views.TrialViewSet)  # Испытания по областям
 router.register(r'trial-participants', views.TrialParticipantViewSet)  # Участники сортоопытов

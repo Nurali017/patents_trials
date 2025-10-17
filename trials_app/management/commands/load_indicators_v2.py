@@ -48,7 +48,8 @@ class Command(BaseCommand):
         self.print_summary()
 
     def create_indicator(self, code, name, unit, category='common', is_quality=False, 
-                        sort_order=0, group_codes=None, description=''):
+                        sort_order=0, group_codes=None, description='', is_auto_calculated=False, 
+                        calculation_formula='', is_required=False, is_recommended=True):
         """Создать или обновить показатель с привязкой к группам"""
         if self.dry_run:
             self.stdout.write(f'  [DRY-RUN] {name} ({unit or "балл"})')
@@ -66,6 +67,10 @@ class Command(BaseCommand):
                 'is_universal': False,
                 'description': description,
                 'is_numeric': True,
+                'is_auto_calculated': is_auto_calculated,
+                'calculation_formula': calculation_formula,
+                'is_required': is_required,
+                'is_recommended': is_recommended,
             }
         )
         
@@ -128,7 +133,7 @@ class Command(BaseCommand):
         """Общие показатели для нескольких групп культур"""
         self.stdout.write(self.style.HTTP_INFO('\n📊 ОБЩИЕ ПОКАЗАТЕЛИ'))
         
-        # 1. Урожайность (почти все группы)
+        # 1. Урожайность (почти все группы) - ОБЯЗАТЕЛЬНЫЙ ПО МЕТОДИКЕ
         self.create_indicator(
             code='yield',
             name='Урожайность',
@@ -137,10 +142,12 @@ class Command(BaseCommand):
             is_quality=False,
             sort_order=1,
             group_codes=['GRAIN', 'LEGUMES', 'OILSEEDS', 'FORAGE', 'VEGETABLES', 'melons', 'FRUITS', 'BERRY'],
-            description='Общий показатель урожайности для большинства культур'
+            description='Общий показатель урожайности для большинства культур',
+            is_required=True,
+            is_recommended=True
         )
         
-        # 2. Отклонение от стандарта (зерновые, зернобобовые, масличные)
+        # 2. Отклонение от стандарта (зерновые, зернобобовые, масличные) - АВТОРАСЧЕТНЫЕ
         self.create_indicator(
             code='deviation_standard_abs',
             name='Отклонение от стандарта (абсолютное)',
@@ -149,7 +156,9 @@ class Command(BaseCommand):
             is_quality=False,
             sort_order=2,
             group_codes=['GRAIN', 'LEGUMES', 'OILSEEDS'],
-            description='Отклонение урожайности от стандартного сорта в ц/га'
+            description='Отклонение урожайности от стандартного сорта в ц/га',
+            is_auto_calculated=True,
+            calculation_formula='Урожайность участника - Урожайность стандарта'
         )
         
         self.create_indicator(
@@ -160,7 +169,9 @@ class Command(BaseCommand):
             is_quality=False,
             sort_order=3,
             group_codes=['GRAIN', 'LEGUMES', 'OILSEEDS'],
-            description='Отклонение урожайности от стандартного сорта в процентах'
+            description='Отклонение урожайности от стандартного сорта в процентах',
+            is_auto_calculated=True,
+            calculation_formula='((Урожайность участника - Урожайность стандарта) / Урожайность стандарта) × 100'
         )
         
         # 3. Вегетационный период (все группы)
@@ -259,7 +270,7 @@ class Command(BaseCommand):
             description='Комплексная оценка сорта'
         )
         
-        # 11. Товарность (овощные, бахчевые)
+        # 11. Товарность (овощные, бахчевые) - АВТОРАСЧЕТНАЯ
         self.create_indicator(
             code='marketability',
             name='Товарность',
@@ -268,7 +279,9 @@ class Command(BaseCommand):
             is_quality=False,
             sort_order=12,
             group_codes=['VEGETABLES', 'melons', 'FRUITS', 'BERRY'],
-            description='Процент товарной продукции от общего урожая'
+            description='Процент товарной продукции от общего урожая',
+            is_auto_calculated=True,
+            calculation_formula='(Товарная урожайность / Общая урожайность) × 100'
         )
         
         # 12. Дегустационная оценка (овощные, бахчевые, плодовые)
@@ -466,7 +479,9 @@ class Command(BaseCommand):
             is_quality=False,
             sort_order=31,
             group_codes=['GRAIN'],
-            description='Процент зерна от массы початка (кукуруза)'
+            description='Процент зерна от массы початка (кукуруза)',
+            is_auto_calculated=True,
+            calculation_formula='(Масса зерна / Масса початка) × 100'
         )
         
         self.create_indicator(
@@ -620,7 +635,9 @@ class Command(BaseCommand):
             is_quality=False,
             sort_order=61,
             group_codes=['VEGETABLES'],
-            description='Урожайность товарной продукции'
+            description='Урожайность товарной продукции',
+            is_auto_calculated=True,
+            calculation_formula='Общая урожайность × (Товарность / 100)'
         )
         
         self.create_indicator(

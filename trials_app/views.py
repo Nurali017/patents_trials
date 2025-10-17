@@ -148,6 +148,96 @@ class IndicatorViewSet(viewsets.ModelViewSet):
             )
         
         return queryset
+    
+    @action(detail=False, methods=['get'], url_path='by-culture/(?P<culture_id>[^/.]+)')
+    def by_culture(self, request, culture_id=None):
+        """
+        Получить показатели для конкретной культуры с группировкой
+        
+        GET /api/v1/indicators/by-culture/{culture_id}/
+        
+        Response:
+        {
+            "culture": {...},
+            "required_indicators": [...],
+            "recommended_indicators": [...],
+            "quality_indicators": [...],
+            "total_indicators": 15
+        }
+        """
+        try:
+            culture = Culture.objects.get(id=culture_id, is_deleted=False)
+        except Culture.DoesNotExist:
+            return Response({'error': 'Culture not found'}, status=404)
+        
+        if not culture.group_culture:
+            return Response({
+                'culture': {
+                    'id': culture.id,
+                    'name': culture.name,
+                    'group_culture': None
+                },
+                'required_indicators': [],
+                'recommended_indicators': [],
+                'quality_indicators': [],
+                'total_indicators': 0,
+                'message': 'Culture has no group assigned'
+            })
+        
+        # Получить все показатели для группы культуры
+        all_indicators = Indicator.objects.filter(
+            group_cultures=culture.group_culture,
+            is_deleted=False
+        ).order_by('sort_order', 'name')
+        
+        # Разделить по типам
+        required_indicators = []
+        recommended_indicators = []
+        quality_indicators = []
+        
+        for indicator in all_indicators:
+            indicator_data = {
+                'id': indicator.id,
+                'code': indicator.code,
+                'name': indicator.name,
+                'unit': indicator.unit,
+                'is_numeric': indicator.is_numeric,
+                'is_required': indicator.is_required,
+                'is_recommended': indicator.is_recommended,
+                'is_quality': indicator.is_quality,
+                'is_auto_calculated': indicator.is_auto_calculated,
+                'calculation_formula': indicator.calculation_formula,
+                'category': indicator.category,
+                'sort_order': indicator.sort_order,
+                'description': indicator.description
+            }
+            
+            if indicator.is_quality:
+                quality_indicators.append(indicator_data)
+            elif indicator.is_required:
+                required_indicators.append(indicator_data)
+            elif indicator.is_recommended:
+                recommended_indicators.append(indicator_data)
+        
+        return Response({
+            'culture': {
+                'id': culture.id,
+                'name': culture.name,
+                'group_culture': {
+                    'id': culture.group_culture.id,
+                    'name': culture.group_culture.name
+                }
+            },
+            'required_indicators': required_indicators,
+            'recommended_indicators': recommended_indicators,
+            'quality_indicators': quality_indicators,
+            'total_indicators': len(all_indicators),
+            'summary': {
+                'required_count': len(required_indicators),
+                'recommended_count': len(recommended_indicators),
+                'quality_count': len(quality_indicators)
+            }
+        })
 
 class TrialTypeViewSet(viewsets.ModelViewSet):
     """Типы испытаний (КСИ, ООС, ДЮС-ТЕСТ и т.д.)"""
@@ -1219,43 +1309,55 @@ class TrialViewSet(viewsets.ModelViewSet):
         
         GET /api/v1/trials/{id}/form008/
         
-        Возвращает структуру для массового внесения результатов
-        по всем участникам и показателям.
+        Возвращает:
+        - Организационную информацию (шапка формы)
+        - Участников (СНАЧАЛА стандарт, потом испытываемые)
+        - Показатели для данной культуры
+        - Предупреждения (если не заполнены критические поля)
         """
         trial = self.get_object()
         
-        # Получить участников
-        participants = trial.participants.filter(is_deleted=False).order_by('participant_number')
+        # === КРИТИЧЕСКИЕ ПРОВЕРКИ ===
+        warnings = []
         
-        participants_data = []
-        for participant in participants:
-            # Получить текущие результаты участника
-            results = TrialResult.objects.filter(
-                participant=participant,
-                is_deleted=False
-            ).select_related('indicator')
-            
-            current_results = {}
-            for result in results:
-                current_results[result.indicator.code] = {
-                    'value': result.value,
-                    'text_value': result.text_value,
-                    'measurement_date': result.measurement_date
-                }
-            
-            participants_data.append({
-                'id': participant.id,
-                'participant_number': participant.participant_number,
-                'sort_name': participant.sort_record.name if participant.sort_record else None,
-                'sort_code': participant.sort_record.public_code if participant.sort_record else None,
-                'statistical_group': participant.statistical_group,
-                'statistical_result': participant.statistical_result,
-                'is_standard': participant.is_standard,
-                'application_number': participant.application.application_number if participant.application else None,
-                'current_results': current_results
+        # Проверка 1: группа спелости
+        if not trial.maturity_group_code and not trial.maturity_group_name:
+            warnings.append({
+                'level': 'error',
+                'message': '⚠️ КРИТИЧНО: Группа спелости не указана! Форма 008 заполняется СТРОГО для одной группы спелости.'
             })
         
-        # Получить показатели для культуры
+        # Проверка 2: НСР
+        if not trial.lsd_095:
+            warnings.append({
+                'level': 'warning',
+                'message': '⚠️ НСР₀.₉₅ не введен. "Группа по стат. обработке" не может быть рассчитана.'
+            })
+        
+        # Проверка 3: точность опыта
+        if trial.accuracy_percent and trial.accuracy_percent > 4.0 and trial.replication_count == 4:
+            warnings.append({
+                'level': 'warning',
+                'message': f'⚠️ Точность опыта P={trial.accuracy_percent}% превышает допустимое значение 4% при 4-кратной повторности.'
+            })
+        
+        # === ПОЛУЧИТЬ УЧАСТНИКОВ (СТАНДАРТ ПЕРВЫМ!) ===
+        # Сначала стандарты (statistical_group=0)
+        standards = trial.participants.filter(is_deleted=False, statistical_group=0).order_by('participant_number')
+        # Потом испытываемые (statistical_group=1)
+        tested = trial.participants.filter(is_deleted=False, statistical_group=1).order_by('participant_number')
+        
+        participants_data = []
+        
+        # Добавить стандарты первыми
+        for participant in standards:
+            participants_data.append(self._format_participant_for_form008(participant))
+        
+        # Добавить испытываемые
+        for participant in tested:
+            participants_data.append(self._format_participant_for_form008(participant))
+        
+        # === ПОЛУЧИТЬ ПОКАЗАТЕЛИ для данной культуры ===
         indicators_data = []
         if trial.culture:
             indicators = trial.indicators.filter(
@@ -1270,6 +1372,10 @@ class TrialViewSet(viewsets.ModelViewSet):
                     'name': indicator.name,
                     'unit': indicator.unit,
                     'is_numeric': indicator.is_numeric,
+                    'is_required': indicator.is_required,
+                    'is_auto_calculated': indicator.is_auto_calculated,
+                    'validation_rules': indicator.validation_rules,
+                    'category': indicator.category,
                     'sort_order': indicator.sort_order
                 })
         
@@ -1285,8 +1391,8 @@ class TrialViewSet(viewsets.ModelViewSet):
             
             if values:
                 min_max[indicator.code] = {
-                    'min': min(values),
-                    'max': max(values)
+                    'min': float(min(values)),
+                    'max': float(max(values))
                 }
             else:
                 min_max[indicator.code] = {
@@ -1294,40 +1400,120 @@ class TrialViewSet(viewsets.ModelViewSet):
                     'max': None
                 }
         
-        # Получить статистику
+        # Получить статистику (готовые значения, введенные вручную)
         statistics = trial.calculate_trial_statistics()
         
         return Response({
             'trial': {
+                # Основная информация
                 'id': trial.id,
                 'year': trial.year or (trial.start_date.year if trial.start_date else None),
+                
+                # ФОРМА 008: Организационная информация
+                'maturity_group_code': trial.maturity_group_code,
+                'maturity_group_name': trial.maturity_group_name,
+                'trial_code': trial.trial_code,
+                'culture_code': trial.culture_code,
+                'predecessor_code': trial.predecessor_code,
+                
+                # ГСУ и область
                 'region_name': trial.region.name,
-                'region_code': None,  # TODO: добавить код региона в модель
                 'oblast_name': trial.region.oblast.name,
+                
+                # Культура
                 'culture_name': trial.culture.name if trial.culture else None,
                 'culture_group': trial.culture.group_culture.name if trial.culture and trial.culture.group_culture else None,
-                'trial_type': trial.trial_type.name if trial.trial_type else None,
+                'culture_id': trial.culture.id if trial.culture else None,
+                'patents_culture_id': trial.patents_culture_id,
+                
+                # Тип испытания
+                'trial_type': trial.trial_type.name if trial.trial_type else 'КСИ',
                 'trial_type_code': trial.trial_type.code if trial.trial_type else None,
+                
+                # Предшественник
                 'predecessor': self._get_predecessor_display(trial),
-                'growing_conditions': trial.get_growing_conditions_display() if trial.growing_conditions else None,
-                'cultivation_technology': trial.get_cultivation_technology_display() if trial.cultivation_technology else None,
+                
+                # Условия возделывания
+                'agro_background': trial.get_agro_background_display() if trial.agro_background else None,
+                'growing_conditions': trial.get_growing_conditions_display() if trial.growing_conditions else 'на богаре',
+                'cultivation_technology': trial.get_cultivation_technology_display() if trial.cultivation_technology else 'обычная',
                 'growing_method': trial.get_growing_method_display() if trial.growing_method else None,
+                
+                # Уборка
                 'harvest_timing': trial.get_harvest_timing_display() if trial.harvest_timing else None,
                 'harvest_date': trial.harvest_date,
+                
+                # Ответственный
+                'responsible_person': trial.responsible_person,
+                'responsible_person_title': trial.responsible_person_title,
+                'approval_date': trial.approval_date,
+                
+                # Статус
                 'status': trial.status,
                 'status_display': trial.get_status_display()
             },
+            'statistics': statistics or {
+                'lsd_095': None,
+                'error_mean': None,
+                'accuracy_percent': None,
+                'replication_count': 4,
+                'has_data': False
+            },
             'participants': participants_data,
             'indicators': indicators_data,
-            'statistics': statistics or {
-                'calculated': False,
-                'sx': None,
-                'accuracy_percent': None,
-                'lsd': None,
-                'error_mean': None
-            },
-            'min_max': min_max
+            'min_max': min_max,
+            'warnings': warnings,
+            'metadata': {
+                'form_name': 'МСХ РК 008',
+                'form_title': 'ОСНОВНЫЕ ПОКАЗАТЕЛИ ИСПЫТЫВАЕМЫХ СОРТОВ',
+                'submission_deadline': '15 дней после уборки урожая',
+                'note': 'Форма заполняется строго для одной группы спелости'
+            }
         })
+    
+    def _format_participant_for_form008(self, participant):
+        """
+        Форматировать участника для формы 008
+        
+        Возвращает все данные участника включая результаты по делянкам
+        """
+        # Получить все результаты участника
+        results = TrialResult.objects.filter(
+            participant=participant,
+            is_deleted=False
+        ).select_related('indicator')
+        
+        current_results = {}
+        for result in results:
+            current_results[result.indicator.code] = {
+                'value': result.value,
+                'plot_1': result.plot_1,
+                'plot_2': result.plot_2,
+                'plot_3': result.plot_3,
+                'plot_4': result.plot_4,
+                'is_rejected': result.is_rejected,
+                'rejection_reason': result.rejection_reason,
+                'is_restored': result.is_restored,
+                'text_value': result.text_value,
+                'measurement_date': result.measurement_date
+            }
+        
+        return {
+            'id': participant.id,
+            'participant_number': participant.participant_number,
+            'sort_name': participant.sort_record.name if participant.sort_record else None,
+            'sort_code': participant.sort_record.public_code if participant.sort_record else None,
+            
+            # ДВА РАЗНЫХ ПОЛЯ!
+            'maturity_group_code': participant.maturity_group_code,  # Организационный
+            'statistical_result': participant.statistical_result,    # Группа по стат. обработке (АВТОРАСЧЕТ)
+            'statistical_result_display': participant.get_statistical_result_display(),
+            
+            'statistical_group': participant.statistical_group,
+            'is_standard': participant.is_standard,
+            'application_number': participant.application.application_number if participant.application else None,
+            'current_results': current_results
+        }
     
     def _get_predecessor_display(self, trial):
         """Получить отображение предшественника"""
@@ -1342,17 +1528,37 @@ class TrialViewSet(viewsets.ModelViewSet):
         
         POST /api/v1/trials/{id}/form008/bulk-save/
         {
-            "is_final": false,  // false = черновик, true = финальная отправка
+            "is_final": false,
             "harvest_date": "2024-09-23",
             "measurement_date": "2024-09-23",
+            
+            // СТАТИСТИКА ОПЫТА (обязательно при is_final=true)
+            "statistics": {
+                "lsd_095": 5.2,
+                "error_mean": 2.1,
+                "accuracy_percent": 3.8,
+                "replication_count": 4,
+                "use_auto_calculation": false  // опционально - использовать авторасчет с делянок
+            },
+            
             "participants": [
                 {
                     "participant_id": 50,
                     "results": {
-                        "yield": 7.9,
-                        "seed_weight_1000": 32.9,
-                        "lodging_resistance": 4,
-                        ...
+                        "yield": {
+                            // ВАРИАНТ 1: С делянками (опционально)
+                            "plot_1": 84.5,
+                            "plot_2": 86.1,
+                            "plot_3": 85.0,
+                            "plot_4": 85.6,
+                            // value рассчитается автоматически
+                            
+                            // ВАРИАНТ 2: Сразу среднее
+                            "value": 85.05
+                        },
+                        "seed_weight_1000": {
+                            "value": 32.9
+                        }
                     }
                 }
             ]
@@ -1361,7 +1567,7 @@ class TrialViewSet(viewsets.ModelViewSet):
         trial = self.get_object()
         
         # Проверка статуса
-        if trial.status not in ['active', 'planned']:
+        if trial.status not in ['active', 'planned', 'completed_008']:
             return Response({
                 'error': f'Cannot save results. Trial status is {trial.status}'
             }, status=400)
@@ -1369,22 +1575,52 @@ class TrialViewSet(viewsets.ModelViewSet):
         is_final = request.data.get('is_final', False)
         harvest_date = request.data.get('harvest_date')
         measurement_date = request.data.get('measurement_date', harvest_date)
-        participants_data = request.data.get('participants', [])
         
+        # === ОБНОВИТЬ СТАТИСТИКУ ОПЫТА ===
+        statistics = request.data.get('statistics', {})
+        if statistics:
+            # Если указан use_auto_calculation, получить авторасчет
+            if statistics.get('use_auto_calculation', False):
+                auto_stats = trial.calculate_auto_statistics_from_plots()
+                if auto_stats:
+                    trial.lsd_095 = statistics.get('lsd_095', auto_stats.get('auto_lsd_095'))
+                    trial.error_mean = statistics.get('error_mean', auto_stats.get('auto_error_mean'))
+                    trial.accuracy_percent = statistics.get('accuracy_percent', auto_stats.get('auto_accuracy_percent'))
+                    trial.replication_count = statistics.get('replication_count', auto_stats.get('replication_count', 4))
+                else:
+                    return Response({
+                        'error': 'Недостаточно данных с делянок для авторасчета. Введите значения вручную.'
+                    }, status=400)
+            else:
+                # Обычный ручной ввод
+                trial.lsd_095 = statistics.get('lsd_095')
+                trial.error_mean = statistics.get('error_mean')
+                trial.accuracy_percent = statistics.get('accuracy_percent')
+                trial.replication_count = statistics.get('replication_count', 4)
+        
+        # Обновить harvest_date
+        if harvest_date:
+            trial.harvest_date = harvest_date
+        
+        trial.save()
+        
+        # Валидация: НСР обязателен при финальной отправке
+        if is_final and not trial.lsd_095:
+            return Response({
+                'error': 'НСР₀.₉₅ обязателен для финальной отправки формы 008. Без НСР невозможно рассчитать "Группу по стат. обработке".'
+            }, status=400)
+        
+        participants_data = request.data.get('participants', [])
         if not participants_data:
             return Response({
                 'error': 'No participants data provided'
             }, status=400)
         
-        # Обновить harvest_date в trial
-        if harvest_date:
-            trial.harvest_date = harvest_date
-            trial.save()
-        
         results_created = 0
         results_updated = 0
+        errors = []
         
-        # Сохранить результаты для каждого участника
+        # === СОХРАНИТЬ РЕЗУЛЬТАТЫ ===
         for p_data in participants_data:
             participant_id = p_data.get('participant_id')
             results = p_data.get('results', {})
@@ -1393,25 +1629,80 @@ class TrialViewSet(viewsets.ModelViewSet):
                 continue
             
             try:
-                participant = TrialParticipant.objects.get(id=participant_id, trial=trial)
+                participant = TrialParticipant.objects.get(
+                    id=participant_id,
+                    trial=trial,
+                    is_deleted=False
+                )
             except TrialParticipant.DoesNotExist:
+                errors.append(f'Participant {participant_id} not found')
                 continue
             
             # Сохранить каждый показатель
-            for indicator_code, value in results.items():
-                # Найти показатель по коду
+            for indicator_code, result_data in results.items():
                 try:
-                    indicator = Indicator.objects.get(code=indicator_code, is_deleted=False)
+                    indicator = Indicator.objects.get(
+                        code=indicator_code,
+                        is_deleted=False
+                    )
                 except Indicator.DoesNotExist:
+                    errors.append(f'Indicator {indicator_code} not found')
                     continue
+                
+                # Подготовить данные
+                if isinstance(result_data, dict):
+                    # Формат: {"value": 85.3, "plot_1": 84.5, ...}
+                    value = result_data.get('value')
+                    plot_1 = result_data.get('plot_1')
+                    plot_2 = result_data.get('plot_2')
+                    plot_3 = result_data.get('plot_3')
+                    plot_4 = result_data.get('plot_4')
+                    is_rejected = result_data.get('is_rejected', False)
+                    rejection_reason = result_data.get('rejection_reason')
+                    is_restored = result_data.get('is_restored', False)
+                else:
+                    # Формат: "yield": 85.3 (простое значение)
+                    value = result_data
+                    plot_1 = plot_2 = plot_3 = plot_4 = None
+                    is_rejected = is_restored = False
+                    rejection_reason = None
+                
+                # Валидация баллов (1-5, шаг 0.5)
+                if indicator.unit == 'балл' and value is not None:
+                    if value < 0 or value > 5:
+                        errors.append(f'{indicator.name}: значение {value} вне допустимого диапазона (0-5 баллов)')
+                        continue
+                    # Проверка шага 0.5
+                    if (value * 2) % 1 != 0:
+                        errors.append(f'{indicator.name}: значение {value} должно иметь шаг 0.5 (например: 4.5)')
+                        continue
+                
+                # Валидация по validation_rules
+                if indicator.validation_rules and value is not None:
+                    rules = indicator.validation_rules
+                    
+                    if 'min_value' in rules and value < rules['min_value']:
+                        errors.append(f'{indicator.name}: значение {value} меньше минимального {rules["min_value"]}')
+                        continue
+                    
+                    if 'max_value' in rules and value > rules['max_value']:
+                        errors.append(f'{indicator.name}: значение {value} больше максимального {rules["max_value"]}')
+                        continue
                 
                 # Создать или обновить результат
                 result_obj, created = TrialResult.objects.update_or_create(
                     participant=participant,
                     indicator=indicator,
                     defaults={
-                        'value': value if isinstance(value, (int, float)) else None,
-                        'text_value': str(value) if not isinstance(value, (int, float)) else None,
+                        'value': value,
+                        'plot_1': plot_1,
+                        'plot_2': plot_2,
+                        'plot_3': plot_3,
+                        'plot_4': plot_4,
+                        'is_rejected': is_rejected,
+                        'rejection_reason': rejection_reason,
+                        'is_restored': is_restored,
+                        'text_value': str(value) if not isinstance(value, (int, float)) and value is not None else None,
                         'measurement_date': measurement_date,
                         'trial': trial,
                         'sort_record': participant.sort_record,
@@ -1424,14 +1715,12 @@ class TrialViewSet(viewsets.ModelViewSet):
                 else:
                     results_updated += 1
         
-        # Пересчитать статистику и statistical_result для каждого участника
-        statistics = trial.calculate_trial_statistics()
-        
-        # Обновить statistical_result для всех участников
+        # === ПЕРЕСЧИТАТЬ "ГРУППУ ПО СТАТ. ОБРАБОТКЕ" для всех участников ===
+        # (автоматически на основе урожайности и НСР)
         for participant in trial.participants.filter(is_deleted=False):
             participant.calculate_statistical_result()
         
-        # Рассчитать min/max
+        # Рассчитать min/max по каждому показателю
         min_max = {}
         for indicator in trial.indicators.filter(is_deleted=False, is_quality=False):
             values = TrialResult.objects.filter(
@@ -1447,15 +1736,16 @@ class TrialViewSet(viewsets.ModelViewSet):
                     'max': float(max(values))
                 }
         
-        # Если финальная отправка - изменить статус
+        # === ФИНАЛЬНАЯ ОТПРАВКА ===
         if is_final:
             trial.status = 'completed_008'
+            trial.approval_date = timezone.now().date()
             trial.save()
-            message = 'Form 008 submitted successfully. Field work completed.'
+            message = 'Форма 008 успешно отправлена. Полевые работы завершены.'
         else:
-            message = 'Form 008 draft saved successfully'
+            message = 'Черновик формы 008 успешно сохранен'
         
-        # Получить стандарт для расчета отклонений
+        # === СОБРАТЬ КОДЫ ГРУПП всех участников ===
         standard_participant = trial.get_standard_participants().first()
         standard_yield = None
         
@@ -1468,8 +1758,7 @@ class TrialViewSet(viewsets.ModelViewSet):
             if standard_yield_result:
                 standard_yield = standard_yield_result.value
         
-        # Получить statistical_result для всех участников с отклонениями
-        participants_stats = []
+        participants_codes = []
         for participant in trial.participants.filter(is_deleted=False).order_by('participant_number'):
             # Получить урожайность
             yield_result = TrialResult.objects.filter(
@@ -1488,42 +1777,66 @@ class TrialViewSet(viewsets.ModelViewSet):
                 deviation_abs = round(participant_yield - standard_yield, 2)
                 deviation_pct = round((deviation_abs / standard_yield * 100), 1) if standard_yield != 0 else None
             
-            participants_stats.append({
+            participants_codes.append({
                 'participant_id': participant.id,
                 'participant_number': participant.participant_number,
                 'sort_name': participant.sort_record.name if participant.sort_record else None,
+                
+                # ДВА РАЗНЫХ ПОЛЯ!
+                'maturity_group_code': participant.maturity_group_code,  # Организационный код
+                'statistical_result': participant.statistical_result,    # Группа по стат. обработке (АВТО)
+                'statistical_result_display': participant.get_statistical_result_display(),
+                
                 'yield': participant_yield,
-                'statistical_result': participant.statistical_result,
-                'statistical_result_display': participant.get_statistical_result_display() if participant.statistical_result is not None else None,
                 'deviation_standard_abs': deviation_abs,
                 'deviation_standard_pct': deviation_pct,
                 'is_standard': participant.is_standard
             })
         
-        return Response({
+        # Получить обновленную статистику
+        statistics_data = trial.calculate_trial_statistics()
+        
+        response_data = {
             'success': True,
             'message': message,
             'is_final': is_final,
             'results_created': results_created,
             'results_updated': results_updated,
             'trial_status': trial.status,
-            'statistics': statistics or {},
+            'statistics': statistics_data or {
+                'lsd_095': None,
+                'error_mean': None,
+                'accuracy_percent': None,
+                'has_data': False
+            },
             'min_max': min_max,
-            'participants_statistical_results': participants_stats
-        })
+            'participants_codes': participants_codes
+        }
+        
+        if errors:
+            response_data['validation_errors'] = errors
+        
+        return Response(response_data)
     
     @action(detail=True, methods=['get'], url_path='form008/statistics')
     def form008_statistics(self, request, pk=None):
         """
         Получить статистику испытания (P%, НСР, E)
         
+        Включает как введенную вручную статистику, так и авторасчет с делянок.
+        
         GET /api/v1/trials/{id}/form008/statistics/
         """
         trial = self.get_object()
         
-        statistics = trial.calculate_trial_statistics()
+        # Получить введенную вручную статистику
+        manual_statistics = trial.calculate_trial_statistics()
         
-        if not statistics:
+        # Получить авторасчет с делянок
+        auto_statistics = trial.calculate_auto_statistics_from_plots()
+        
+        # Если нет никаких данных
+        if not manual_statistics and not auto_statistics:
             return Response({
                 'has_data': False,
                 'message': 'No data available for statistics calculation'
@@ -1577,12 +1890,270 @@ class TrialViewSet(viewsets.ModelViewSet):
                     'statistical_result_display': participant.get_statistical_result_display() if participant.statistical_result is not None else None
                 })
         
+        response_data = {
+            'trial_id': trial.id,
+            'has_manual_data': manual_statistics is not None,
+            'has_auto_data': auto_statistics is not None,
+            'standard': standard_data,
+            'comparison': comparison
+        }
+        
+        # Добавить ручную статистику если есть
+        if manual_statistics:
+            response_data['manual_statistics'] = manual_statistics
+        
+        # Добавить авторасчет если есть
+        if auto_statistics:
+            response_data['auto_statistics'] = auto_statistics
+        
+        return Response(response_data)
+    
+    @action(detail=True, methods=['get'], url_path='form008/auto-statistics')
+    def form008_auto_statistics(self, request, pk=None):
+        """
+        Получить только авторасчет статистики с делянок
+        
+        GET /api/v1/trials/{id}/form008/auto-statistics/
+        
+        Возвращает только авторасчитанные значения НСР₀.₉₅, E и P%
+        на основе данных с делянок всех участников.
+        """
+        trial = self.get_object()
+        
+        # Получить авторасчет с делянок
+        auto_statistics = trial.calculate_auto_statistics_from_plots()
+        
+        if not auto_statistics:
+            return Response({
+                'has_data': False,
+                'message': 'Недостаточно данных с делянок для авторасчета статистики',
+                'requirements': {
+                    'min_participants': 2,
+                    'min_plots_per_participant': 3,
+                    'required_indicator': 'yield'
+                }
+            })
+        
         return Response({
             'trial_id': trial.id,
             'has_data': True,
-            'statistics': statistics,
-            'standard': standard_data,
-            'comparison': comparison
+            'auto_statistics': auto_statistics,
+            'note': 'Это авторасчет для справки. Проверьте корректность и введите окончательные значения вручную.'
+        })
+    
+    @action(detail=True, methods=['patch'], url_path='form008/update-conditions')
+    def form008_update_conditions(self, request, pk=None):
+        """
+        Обновить условия испытания для формы 008
+        
+        PATCH /api/v1/trials/{id}/form008/update-conditions/
+        {
+            "agro_background": "favorable",
+            "growing_conditions": "irrigated", 
+            "cultivation_technology": "traditional",
+            "growing_method": "soil_traditional",
+            "harvest_timing": "medium",
+            "harvest_date": "2024-09-15",
+            "additional_info": "Дополнительные примечания"
+        }
+        """
+        trial = self.get_object()
+        
+        # Разрешенные поля для обновления
+        allowed_fields = [
+            'agro_background', 'growing_conditions', 'cultivation_technology', 
+            'growing_method', 'harvest_timing', 'harvest_date', 'additional_info'
+        ]
+        
+        # Валидация значений
+        field_choices = {
+            'agro_background': [choice[0] for choice in Trial.AGRO_BACKGROUND_CHOICES],
+            'growing_conditions': [choice[0] for choice in Trial.GROWING_CONDITIONS_CHOICES],
+            'cultivation_technology': [choice[0] for choice in Trial.CULTIVATION_TECHNOLOGY_CHOICES],
+            'growing_method': [choice[0] for choice in Trial.GROWING_METHOD_CHOICES],
+            'harvest_timing': [choice[0] for choice in Trial.HARVEST_TIMING_CHOICES],
+        }
+        
+        errors = {}
+        update_data = {}
+        
+        for field in allowed_fields:
+            if field in request.data:
+                value = request.data[field]
+                
+                # Проверка choices для enum полей
+                if field in field_choices and value is not None:
+                    if value not in field_choices[field]:
+                        errors[field] = f"Invalid choice. Must be one of: {', '.join(field_choices[field])}"
+                        continue
+                
+                # Проверка даты
+                if field == 'harvest_date' and value is not None:
+                    try:
+                        from datetime import datetime
+                        if isinstance(value, str):
+                            datetime.strptime(value, '%Y-%m-%d')
+                    except ValueError:
+                        errors[field] = "Invalid date format. Use YYYY-MM-DD"
+                        continue
+                
+                update_data[field] = value
+        
+        if errors:
+            return Response({
+                'error': 'Validation failed',
+                'details': errors
+            }, status=400)
+        
+        # Обновляем поля
+        for field, value in update_data.items():
+            setattr(trial, field, value)
+        
+        trial.save()
+        
+        return Response({
+            'success': True,
+            'message': 'Trial conditions updated successfully',
+            'trial_id': trial.id,
+            'updated_fields': list(update_data.keys()),
+            'trial': TrialSerializer(trial).data
+        })
+    
+    @action(detail=True, methods=['post'], url_path='add-indicators')
+    def add_indicators(self, request, pk=None):
+        """
+        Добавить показатели к испытанию по культуре
+        
+        POST /api/v1/trials/{id}/add-indicators/
+        {
+            "indicator_ids": [1, 2, 3],  // опционально - конкретные показатели
+            "by_culture": true,          // опционально - добавить все показатели культуры
+            "include_recommended": true  // опционально - включить рекомендуемые показатели
+        }
+        
+        Response:
+        {
+            "success": true,
+            "added_indicators": 3,
+            "total_indicators": 5,
+            "indicators": [...]
+        }
+        """
+        trial = self.get_object()
+        
+        indicator_ids = request.data.get('indicator_ids', [])
+        by_culture = request.data.get('by_culture', False)
+        include_recommended = request.data.get('include_recommended', True)
+        
+        added_indicators = []
+        
+        if indicator_ids:
+            # Добавить конкретные показатели
+            indicators_to_add = Indicator.objects.filter(
+                id__in=indicator_ids,
+                is_deleted=False
+            )
+            
+            for indicator in indicators_to_add:
+                if not trial.indicators.filter(id=indicator.id).exists():
+                    trial.indicators.add(indicator)
+                    added_indicators.append(indicator)
+        
+        elif by_culture and trial.culture:
+            # Добавить показатели по культуре
+            if trial.culture.group_culture:
+                # Получить все показатели для группы культуры (кроме уже назначенных)
+                existing_indicator_ids = trial.indicators.values_list('id', flat=True)
+                
+                culture_indicators = Indicator.objects.filter(
+                    group_cultures=trial.culture.group_culture,
+                    is_deleted=False
+                ).exclude(id__in=existing_indicator_ids)
+                
+                # Если не включать рекомендуемые - только обязательные
+                if not include_recommended:
+                    culture_indicators = culture_indicators.filter(is_required=True)
+                
+                for indicator in culture_indicators:
+                    trial.indicators.add(indicator)
+                    added_indicators.append(indicator)
+        
+        # Получить обновленный список показателей
+        all_indicators = trial.indicators.filter(is_deleted=False).order_by('sort_order', 'name')
+        indicators_data = []
+        
+        for indicator in all_indicators:
+            indicators_data.append({
+                'id': indicator.id,
+                'code': indicator.code,
+                'name': indicator.name,
+                'unit': indicator.unit,
+                'is_numeric': indicator.is_numeric,
+                'is_required': indicator.is_required,
+                'is_recommended': indicator.is_recommended,
+                'is_quality': indicator.is_quality,
+                'category': indicator.category,
+                'sort_order': indicator.sort_order
+            })
+        
+        return Response({
+            'success': True,
+            'added_indicators': len(added_indicators),
+            'total_indicators': len(indicators_data),
+            'indicators': indicators_data,
+            'message': f'Added {len(added_indicators)} indicators to trial'
+        })
+    
+    @action(detail=True, methods=['delete'], url_path='remove-indicators')
+    def remove_indicators(self, request, pk=None):
+        """
+        Удалить показатели из испытания
+        
+        DELETE /api/v1/trials/{id}/remove-indicators/
+        {
+            "indicator_ids": [1, 2, 3]  // обязательно - ID показателей для удаления
+        }
+        
+        Response:
+        {
+            "success": true,
+            "removed_indicators": 2,
+            "total_indicators": 3
+        }
+        """
+        trial = self.get_object()
+        
+        indicator_ids = request.data.get('indicator_ids', [])
+        
+        if not indicator_ids:
+            return Response({
+                'error': 'indicator_ids is required'
+            }, status=400)
+        
+        # Удалить показатели (кроме обязательных)
+        indicators_to_remove = Indicator.objects.filter(
+            id__in=indicator_ids,
+            is_deleted=False
+        )
+        
+        removed_count = 0
+        for indicator in indicators_to_remove:
+            if indicator.is_required:
+                return Response({
+                    'error': f'Cannot remove required indicator: {indicator.name}'
+                }, status=400)
+            
+            if trial.indicators.filter(id=indicator.id).exists():
+                trial.indicators.remove(indicator)
+                removed_count += 1
+        
+        total_indicators = trial.indicators.filter(is_deleted=False).count()
+        
+        return Response({
+            'success': True,
+            'removed_indicators': removed_count,
+            'total_indicators': total_indicators,
+            'message': f'Removed {removed_count} indicators from trial'
         })
 
 class TrialParticipantViewSet(viewsets.ModelViewSet):
@@ -3070,6 +3641,9 @@ class TrialPlanViewSet(viewsets.ModelViewSet):
         """
         Создать Trial из плана для конкретного ГСУ и культуры
         
+        ВАЖНО: Создает ОТДЕЛЬНОЕ ИСПЫТАНИЕ для каждой группы спелости!
+        Согласно методике формы 008: "Форма заполняется строго для одной группы спелости"
+        
         POST /api/v1/trial-plans/{id}/create-trial/
         {
             "region_id": 1,
@@ -3077,16 +3651,40 @@ class TrialPlanViewSet(viewsets.ModelViewSet):
             "area_ha": 0.5,
             "responsible_person": "Иванов И.И.",
             "start_date": "2025-03-15",  // опционально - дата начала испытания (по умолчанию текущая дата)
-            "exclude_participants": [123, 456]  // опционально - ID участников для исключения
+            "exclude_participants": [123, 456],  // опционально - ID участников для исключения
+            "maturity_groups": [  // опционально - если не указано, создаст для всех найденных групп
+                {
+                    "code": "D03",
+                    "name": "Средний (среднеспелый)"
+                },
+                {
+                    "code": "D07", 
+                    "name": "Среднеранний"
+                }
+            ]
         }
         
         Response:
         {
             "success": true,
-            "trial_id": 20,
-            "total_participants": 11,
-            "status": "active",
-            "message": "Trial created with 11 participants from plan"
+            "trials_created": 2,
+            "trials": [
+                {
+                    "trial_id": 20,
+                    "maturity_group_code": "D03",
+                    "maturity_group_name": "Средний (среднеспелый)",
+                    "total_participants": 5,
+                    "status": "active"
+                },
+                {
+                    "trial_id": 21,
+                    "maturity_group_code": "D07", 
+                    "maturity_group_name": "Среднеранний",
+                    "total_participants": 6,
+                    "status": "active"
+                }
+            ],
+            "message": "Created 2 trials for different maturity groups"
         }
         """
         trial_plan = self.get_object()
@@ -3097,6 +3695,7 @@ class TrialPlanViewSet(viewsets.ModelViewSet):
         responsible_person = request.data.get('responsible_person')
         exclude_participants = request.data.get('exclude_participants', [])
         start_date = request.data.get('start_date')
+        maturity_groups = request.data.get('maturity_groups', [])
         
         if not region_id or not culture_id:
             return Response({
@@ -3123,7 +3722,6 @@ class TrialPlanViewSet(viewsets.ModelViewSet):
             }, status=400)
         
         # Найти участников плана для этого ГСУ и культуры
-        # Через TrialPlanTrial находим всех участников
         trial_plan_trials = TrialPlanTrial.objects.filter(
             participant__culture_trial_type__trial_plan_culture__trial_plan=trial_plan,
             region=region,
@@ -3135,9 +3733,8 @@ class TrialPlanViewSet(viewsets.ModelViewSet):
                 'error': f'No participants found in plan for region {region.name} and culture {culture.name}'
             }, status=400)
         
-        # Получить уникальных участников с учетом исключений
-        participants_to_add = []
-        seen_sort_ids = set()
+        # === СГРУППИРОВАТЬ УЧАСТНИКОВ ПО ГРУППАМ СПЕЛОСТИ ===
+        participants_by_maturity_group = {}
         
         for plan_trial in trial_plan_trials:
             participant = plan_trial.participant
@@ -3146,8 +3743,7 @@ class TrialPlanViewSet(viewsets.ModelViewSet):
             if participant.patents_sort_id in exclude_participants:
                 continue
             
-            # Проверяем что сорт соответствует нужной культуре
-            # (получаем сорт из Patents и проверяем его культуру)
+            # Получить сорт и проверить культуру
             sort_record, _ = SortRecord.objects.get_or_create(
                 sort_id=participant.patents_sort_id,
                 defaults={'name': f'Сорт {participant.patents_sort_id}'}
@@ -3161,92 +3757,213 @@ class TrialPlanViewSet(viewsets.ModelViewSet):
             if sort_record.culture and sort_record.culture.id != culture.id:
                 continue
             
-            # Избегаем дубликатов
-            if participant.patents_sort_id in seen_sort_ids:
-                continue
+            # Получить группу спелости из заявки или сорта
+            maturity_group_code = self._get_maturity_group_code(participant, sort_record)
             
-            seen_sort_ids.add(participant.patents_sort_id)
-            participants_to_add.append({
-                'participant': participant,
-                'sort_record': sort_record,
-                'plan_trial': plan_trial
-            })
+            # Группировать по коду группы спелости
+            if maturity_group_code not in participants_by_maturity_group:
+                participants_by_maturity_group[maturity_group_code] = []
+            
+            # Избегаем дубликатов внутри группы
+            existing_sort_ids = {p['participant'].patents_sort_id for p in participants_by_maturity_group[maturity_group_code]}
+            if participant.patents_sort_id not in existing_sort_ids:
+                participants_by_maturity_group[maturity_group_code].append({
+                    'participant': participant,
+                    'sort_record': sort_record,
+                    'plan_trial': plan_trial,
+                    'maturity_group_code': maturity_group_code
+                })
         
-        if not participants_to_add:
+        if not participants_by_maturity_group:
             return Response({
                 'error': f'No matching participants found for culture {culture.name}'
             }, status=400)
         
-        # Взять параметры из первого TrialPlanTrial
-        first_plan_trial = participants_to_add[0]['plan_trial']
+        # === СОЗДАТЬ ОТДЕЛЬНОЕ ИСПЫТАНИЕ ДЛЯ КАЖДОЙ ГРУППЫ СПЕЛОСТИ ===
+        created_trials = []
         
-        # Подготовить дату начала (из payload или текущая дата)
-        trial_start_date = start_date or timezone.now().date()
+        # Если указаны конкретные группы спелости - использовать их
+        if maturity_groups:
+            groups_to_create = maturity_groups
+        else:
+            # Создать для всех найденных групп
+            groups_to_create = []
+            for group_code, participants in participants_by_maturity_group.items():
+                groups_to_create.append({
+                    'code': group_code,
+                    'name': self._get_maturity_group_name(group_code)
+                })
         
-        # Создать Trial
-        trial = Trial.objects.create(
-            region=region,
-            culture=culture,
-            trial_type=first_plan_trial.trial_type or trial_plan.trial_type,
-            area_ha=area_ha,
-            year=trial_plan.year,
-            planting_season=first_plan_trial.season,
-            predecessor_culture=self._get_predecessor_culture(first_plan_trial.predecessor),
-            growing_conditions='rainfed',  # По умолчанию богара
-            cultivation_technology='traditional',  # По умолчанию обычная
-            responsible_person=responsible_person,
-            trial_plan=trial_plan,
-            status='active',
-            start_date=trial_start_date,  # Используем переданную дату или текущую
-            created_by=request.user
-        )
-        
-        # Автоматически назначить показатели по культуре
-        if culture.group_culture:
-            auto_indicators = Indicator.objects.filter(
-                group_cultures=culture.group_culture,
-                is_deleted=False
-            ).distinct()
-            trial.indicators.set(auto_indicators)
-        
-        # Создать участников
-        created_participants = []
-        for idx, p_info in enumerate(participants_to_add, start=1):
-            participant = p_info['participant']
-            sort_record = p_info['sort_record']
+        for group_info in groups_to_create:
+            group_code = group_info['code']
+            group_name = group_info['name']
             
-            trial_participant = TrialParticipant.objects.create(
-                trial=trial,
-                sort_record=sort_record,
-                statistical_group=participant.statistical_group,
-                participant_number=idx,
-                application_id=participant.application.id if participant.application else None
+            # Получить участников для этой группы спелости
+            group_participants = participants_by_maturity_group.get(group_code, [])
+            
+            if not group_participants:
+                continue  # Пропускаем пустые группы
+            
+            # Взять параметры из первого участника группы
+            first_plan_trial = group_participants[0]['plan_trial']
+            trial_start_date = start_date or timezone.now().date()
+            
+            # Создать Trial для этой группы спелости
+            trial = Trial.objects.create(
+                region=region,
+                culture=culture,
+                trial_type=first_plan_trial.trial_type or trial_plan.trial_type,
+                area_ha=area_ha,
+                year=trial_plan.year,
+                planting_season=first_plan_trial.season,
+                predecessor_culture=self._get_predecessor_culture(first_plan_trial.predecessor),
+                growing_conditions='rainfed',
+                cultivation_technology='traditional',
+                responsible_person=responsible_person,
+                trial_plan=trial_plan,
+                status='active',
+                start_date=trial_start_date,
+                created_by=request.user,
+                
+                # ФОРМА 008: Группа спелости (КРИТИЧНО!)
+                maturity_group_code=group_code,
+                maturity_group_name=group_name,
+                
+                # Коды для отчетности
+                trial_code=f"{region.name[:3].upper()}-{trial_plan.year}-{group_code}",
+                culture_code=culture.name[:3].upper(),
+                predecessor_code=first_plan_trial.predecessor or "ПАР"
             )
-            created_participants.append(trial_participant)
             
-            # Автоматически создать пустые результаты для основных показателей
-            create_basic_trial_results(trial_participant, request.user)
+            # Автоматически назначить только ОБЯЗАТЕЛЬНЫЕ показатели по культуре
+            if culture.group_culture:
+                required_indicators = Indicator.objects.filter(
+                    group_cultures=culture.group_culture,
+                    is_required=True,  # Только обязательные показатели
+                    is_deleted=False
+                ).distinct()
+                trial.indicators.set(required_indicators)
+            
+            # Создать участников для этой группы спелости
+            created_participants = []
+            for idx, p_info in enumerate(group_participants, start=1):
+                participant = p_info['participant']
+                sort_record = p_info['sort_record']
+                
+                trial_participant = TrialParticipant.objects.create(
+                    trial=trial,
+                    sort_record=sort_record,
+                    statistical_group=participant.statistical_group,
+                    participant_number=idx,
+                    application_id=participant.application.id if participant.application else None,
+                    
+                    # ФОРМА 008: Код группы спелости участника
+                    maturity_group_code=group_code
+                )
+                created_participants.append(trial_participant)
+                
+                # Автоматически создать пустые результаты для основных показателей
+                create_basic_trial_results(trial_participant, request.user)
+            
+            # Обновить статус заявок
+            application_ids = set()
+            for tp in created_participants:
+                if tp.application_id:
+                    application_ids.add(tp.application_id)
+            
+            if application_ids:
+                Application.objects.filter(
+                    id__in=application_ids,
+                    status='distributed'
+                ).update(status='in_progress')
+            
+            created_trials.append({
+                'trial_id': trial.id,
+                'maturity_group_code': group_code,
+                'maturity_group_name': group_name,
+                'total_participants': len(created_participants),
+                'status': trial.status,
+                'trial': TrialSerializer(trial).data
+            })
         
-        # Обновить статус заявок
-        application_ids = set()
-        for tp in created_participants:
-            if tp.application_id:
-                application_ids.add(tp.application_id)
-        
-        if application_ids:
-            Application.objects.filter(
-                id__in=application_ids,
-                status='distributed'
-            ).update(status='in_progress')
+        if not created_trials:
+            return Response({
+                'error': 'No trials were created. Check maturity groups configuration.'
+            }, status=400)
         
         return Response({
             'success': True,
-            'trial_id': trial.id,
-            'total_participants': len(created_participants),
-            'status': trial.status,
-            'message': f'Trial created with {len(created_participants)} participants from plan',
-            'trial': TrialSerializer(trial).data
+            'trials_created': len(created_trials),
+            'trials': created_trials,
+            'message': f'Created {len(created_trials)} trial(s) for different maturity groups'
         })
+    
+    def _get_maturity_group_code(self, participant, sort_record):
+        """
+        Определить код группы спелости для участника
+        
+        Приоритет:
+        1. Из заявки (application.maturity_group)
+        2. Из сорта (sort_record.maturity_group)
+        3. По умолчанию "D01"
+        
+        Args:
+            participant: TrialPlanParticipant
+            sort_record: SortRecord
+            
+        Returns:
+            str: код группы спелости (D01, D03, D07...)
+        """
+        # 1. Попробовать из заявки
+        if participant.application and hasattr(participant.application, 'maturity_group'):
+            maturity_group = participant.application.maturity_group
+            if maturity_group:
+                # Извлечь код из строки типа "D07 - Среднеспелая группа"
+                if isinstance(maturity_group, str) and '-' in maturity_group:
+                    code = maturity_group.split('-')[0].strip()
+                    if code.startswith('D') and code[1:].isdigit():
+                        return code
+                elif isinstance(maturity_group, str) and maturity_group.startswith('D'):
+                    return maturity_group
+        
+        # 2. Попробовать из сорта
+        if sort_record and hasattr(sort_record, 'maturity_group'):
+            maturity_group = sort_record.maturity_group
+            if maturity_group:
+                if isinstance(maturity_group, str) and '-' in maturity_group:
+                    code = maturity_group.split('-')[0].strip()
+                    if code.startswith('D') and code[1:].isdigit():
+                        return code
+                elif isinstance(maturity_group, str) and maturity_group.startswith('D'):
+                    return maturity_group
+        
+        # 3. По умолчанию
+        return "D01"
+    
+    def _get_maturity_group_name(self, group_code):
+        """
+        Получить название группы спелости по коду
+        
+        Args:
+            group_code: str - код группы (D01, D02, D03...)
+            
+        Returns:
+            str: название группы спелости
+        """
+        group_names = {
+            "D01": "Очень ранний (ультраранний)",
+            "D02": "Ранний (раннеспелый)",
+            "D03": "Средний (среднеспелый)",
+            "D04": "Поздний (позднеспелый)",
+            "D05": "Очень поздний",
+            "D06": "От очень раннего до раннего",
+            "D07": "Среднеранний",
+            "D08": "Среднепоздний",
+            "D09": "От позднего до очень позднего",
+            "D10": "Ремонтантный"
+        }
+        
+        return group_names.get(group_code, f"Группа спелости {group_code}")
     
     def _get_predecessor_culture(self, predecessor_value):
         """
@@ -3719,3 +4436,5 @@ class AnnualDecisionItemViewSet(viewsets.ModelViewSet):
             'message': 'Данные обновлены',
             'item': AnnualDecisionItemDetailSerializer(item).data
         })
+
+

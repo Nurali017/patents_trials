@@ -38,9 +38,9 @@ class RegionAdmin(admin.ModelAdmin):
 
 @admin.register(Indicator)
 class IndicatorAdmin(admin.ModelAdmin):
-    list_display = ['name', 'unit', 'category', 'is_quality', 'is_universal', 'created_at', 'is_deleted']
+    list_display = ['name', 'unit', 'category', 'is_quality', 'is_required', 'is_recommended', 'is_auto_calculated', 'created_at', 'is_deleted']
     search_fields = ['name', 'code', 'description']
-    list_filter = ['category', 'is_quality', 'is_universal', 'created_at', 'is_deleted']
+    list_filter = ['category', 'is_quality', 'is_required', 'is_recommended', 'is_auto_calculated', 'created_at', 'is_deleted']
     filter_horizontal = ['group_cultures']
     
     fieldsets = (
@@ -49,6 +49,20 @@ class IndicatorAdmin(admin.ModelAdmin):
         }),
         ('Категоризация', {
             'fields': ('category', 'is_quality', 'sort_order')
+        }),
+        ('Обязательность', {
+            'fields': ('is_required', 'is_recommended'),
+            'description': 'Обязательные показатели по методике и рекомендуемые дополнительные'
+        }),
+        ('Авторасчеты', {
+            'fields': ('is_auto_calculated', 'calculation_formula'),
+            'classes': ('collapse',),
+            'description': 'Показатели, которые вычисляются автоматически на основе других данных'
+        }),
+        ('Валидация', {
+            'fields': ('validation_rules',),
+            'classes': ('collapse',),
+            'description': 'Правила валидации значений показателя'
         }),
         ('Применимость', {
             'fields': ('is_universal', 'group_cultures'),

@@ -165,6 +165,34 @@ class Indicator(SoftDeleteModel):
         help_text="Универсальный показатель (применим ко всем культурам)"
     )
     
+    # Для авторасчетных показателей
+    is_auto_calculated = models.BooleanField(
+        default=False,
+        help_text="Авторасчетный показатель (вычисляется автоматически на основе других данных)"
+    )
+    calculation_formula = models.TextField(
+        blank=True,
+        null=True,
+        help_text="Формула расчета (если показатель авторасчетный)"
+    )
+    
+    # Обязательность показателя
+    is_required = models.BooleanField(
+        default=False,
+        help_text="Обязательный показатель по методике государственного сортоиспытания"
+    )
+    is_recommended = models.BooleanField(
+        default=True,
+        help_text="Рекомендуемый дополнительный показатель"
+    )
+    
+    # Валидация показателя
+    validation_rules = models.JSONField(
+        default=dict,
+        blank=True,
+        help_text="Правила валидации: {\"min_value\": 0, \"max_value\": 100, \"required\": true, \"precision\": 2}"
+    )
+    
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     
@@ -1080,6 +1108,12 @@ class Trial(SoftDeleteModel):
         related_name='trials',
         help_text="Культура, которая испытывается"
     )
+    patents_culture_id = models.IntegerField(
+        null=True,
+        blank=True,
+        help_text="ID культуры в Patents Service",
+        db_index=True
+    )
     
     # === Агрономические параметры ===
     
@@ -1111,6 +1145,7 @@ class Trial(SoftDeleteModel):
     GROWING_CONDITIONS_CHOICES = [
         ('rainfed', 'Богара'),
         ('irrigated', 'Орошение'),
+        ('drained', 'На осушенных почвах'),
         ('mixed', 'Смешанное'),
     ]
     growing_conditions = models.CharField(
@@ -1181,6 +1216,83 @@ class Trial(SoftDeleteModel):
         blank=True,
         null=True,
         help_text="Дополнительные примечания"
+    )
+    
+    # === ФОРМА 008: ОРГАНИЗАЦИОННАЯ ИНФОРМАЦИЯ ===
+    
+    # Группа спелости (КРИТИЧНО!)
+    maturity_group_code = models.CharField(
+        max_length=10,
+        blank=True,
+        null=True,
+        db_index=True,
+        verbose_name="Код группы",
+        help_text="Код группы спелости для формы 008 (1, 2, 3...). Все сорта в одной группе спелости имеют одинаковый код."
+    )
+    maturity_group_name = models.CharField(
+        max_length=100,
+        blank=True,
+        null=True,
+        verbose_name="Группа спелости",
+        help_text="Название группы спелости (Среднеранняя группа, D-03 и т.д.). КРИТИЧНО: форма 008 заполняется строго для одной группы!"
+    )
+    
+    # Коды для отчетности
+    trial_code = models.CharField(
+        max_length=50,
+        blank=True,
+        null=True,
+        help_text="Код ГСУ для отчетности"
+    )
+    culture_code = models.CharField(
+        max_length=50,
+        blank=True,
+        null=True,
+        help_text="Код культуры для отчетности"
+    )
+    predecessor_code = models.CharField(
+        max_length=50,
+        blank=True,
+        null=True,
+        help_text="Код предшественника для отчетности"
+    )
+    
+    # === ФОРМА 008: СТАТИСТИКА ОПЫТА (РУЧНОЙ ВВОД!) ===
+    
+    lsd_095 = models.FloatField(
+        blank=True,
+        null=True,
+        verbose_name="НСР₀.₉₅",
+        help_text="Наименьшая существенная разность (ц/га). ОБЯЗАТЕЛЬНО для автоматического расчета 'Группы по стат. обработке'! Вводится вручную на основе дисперсионного анализа."
+    )
+    error_mean = models.FloatField(
+        blank=True,
+        null=True,
+        verbose_name="E (ошибка средней)",
+        help_text="Ошибка средней (ц/га)"
+    )
+    accuracy_percent = models.FloatField(
+        blank=True,
+        null=True,
+        verbose_name="P% (точность опыта)",
+        help_text="Точность опыта (%). Должно быть ≤4% при 4-кратной повторности"
+    )
+    replication_count = models.IntegerField(
+        default=4,
+        help_text="Количество повторений (делянок)"
+    )
+    
+    # Утверждение формы
+    responsible_person_title = models.CharField(
+        max_length=255,
+        blank=True,
+        null=True,
+        help_text="Должность руководителя ГСУ"
+    )
+    approval_date = models.DateField(
+        blank=True,
+        null=True,
+        help_text="Дата утверждения формы 008"
     )
     
     
@@ -1289,62 +1401,156 @@ class Trial(SoftDeleteModel):
     
     def calculate_trial_statistics(self):
         """
-        Рассчитать статистику опыта (Sx, P%, НСР, E)
+        ВОЗВРАЩАЕТ готовую статистику опыта (введенную вручную)
+        
+        ВАЖНО: Статистика НЕ РАССЧИТЫВАЕТСЯ системой!
+        Она вводится ВРУЧНУЮ на основе дисперсионного анализа.
+        
+        Из методики (раздел III.1):
+        "Запрещается ведение расчетов в самой Форме 008. Показатели НСР₀.₉₅, E и P% 
+        должны вводиться как уже готовые результаты дисперсионного анализа"
         
         Returns:
-            dict: {
-                'sx': float,              # Стандартное отклонение
-                'accuracy_percent': float, # Точность опыта (P%)
-                'lsd': float,             # НСР
-                'error_mean': float       # Ошибка средней (E)
+            dict или None: {
+                'lsd_095': float,          # НСР₀.₉₅ (наименьшая существенная разность)
+                'error_mean': float,       # E (ошибка средней)
+                'accuracy_percent': float, # P% (точность опыта)
+                'replication_count': int,  # Количество повторений
+                'has_data': bool
+            }
+        """
+        # Проверить что статистика введена
+        if self.lsd_095 is None:
+            return None
+        
+        return {
+            'lsd_095': self.lsd_095,
+            'error_mean': self.error_mean,
+            'accuracy_percent': self.accuracy_percent,
+            'replication_count': self.replication_count,
+            'has_data': True,
+            'note': 'Статистика введена вручную на основе дисперсионного анализа'
+        }
+    
+    def calculate_auto_statistics_from_plots(self):
+        """
+        АВТОРАСЧЕТ статистики с делянок (для справки)
+        
+        Рассчитывает НСР₀.₉₅, E и P% на основе данных с делянок всех участников.
+        Результат используется как ПОДСКАЗКА - окончательное значение вводится вручную.
+        
+        Returns:
+            dict или None: {
+                'auto_lsd_095': float,     # Авторасчитанный НСР₀.₉₅
+                'auto_error_mean': float,   # Авторасчитанная ошибка средней
+                'auto_accuracy_percent': float, # Авторасчитанная точность опыта
+                'replication_count': int,   # Количество повторностей
+                'has_plot_data': bool,      # Есть ли данные с делянок
+                'note': str,               # Примечание
+                'manual_required': bool     # Требуется ручной ввод
             }
         """
         import math
-        from django.db.models import Avg, StdDev
         
-        # Найти стандарт(ы)
-        standards = self.get_standard_participants()
-        if not standards.exists():
-            return None
-        
-        # Берем первый стандарт для расчета (или можно усреднять по всем)
-        standard = standards.first()
-        
-        # Получить урожайность стандарта (показатель с кодом 'yield')
+        # Получить показатель урожайности
         try:
-            from trials_app.models import Indicator
-            yield_indicator = Indicator.objects.get(code='yield')
-        except:
+            yield_indicator = Indicator.objects.get(code='yield', is_deleted=False)
+        except Indicator.DoesNotExist:
             return None
         
-        # Получить результаты стандарта
-        results = TrialResult.objects.filter(
-            participant=standard,
-            indicator=yield_indicator
-        ).first()
+        # Собрать данные с делянок всех участников
+        plot_data = []
+        participants_with_plots = 0
         
-        if not results:
+        for participant in self.participants.filter(is_deleted=False):
+            result = TrialResult.objects.filter(
+                participant=participant,
+                indicator=yield_indicator,
+                is_deleted=False
+            ).first()
+            
+            if result and result.plot_1 is not None:
+                # Есть данные с делянок
+                plots = [result.plot_1, result.plot_2, result.plot_3, result.plot_4]
+                plots = [p for p in plots if p is not None]  # Убрать None
+                
+                if len(plots) >= 3:  # Минимум 3 делянки
+                    plot_data.append(plots)
+                    participants_with_plots += 1
+        
+        if participants_with_plots < 2:
             return None
         
-        # Используем только итоговое значение
-        if results.value is None:
+        # Проверить что все участники имеют одинаковое количество делянок
+        plot_counts = [len(plots) for plots in plot_data]
+        if len(set(plot_counts)) > 1:
+            # Разное количество делянок - используем минимальное
+            min_plots = min(plot_counts)
+            plot_data = [plots[:min_plots] for plots in plot_data]
+        
+        n_replications = len(plot_data[0]) if plot_data else 0
+        
+        if n_replications < 3:
             return None
         
-        # Для упрощенной статистики используем только value
-        # В реальной системе статистика рассчитывается по множественным испытаниям
-        mean = results.value
+        # ПРОСТОЙ ДИСПЕРСИОННЫЙ АНАЛИЗ
+        # 1. Общее среднее
+        all_values = [value for plots in plot_data for value in plots]
+        grand_mean = sum(all_values) / len(all_values)
         
-        # Упрощенные значения (требуют доработки для реальной статистики)
-        sx = 0  # Стандартное отклонение - требует множественных измерений
-        accuracy = 0  # Точность опыта - требует множественных измерений
-        lsd = 0  # НСР - требует множественных измерений
-        error_mean = 0  # Ошибка средней - требует множественных измерений
+        # 2. Средние по участникам
+        participant_means = [sum(plots) / len(plots) for plots in plot_data]
+        
+        # 3. Ошибка опыта (дисперсия внутри участников)
+        sum_squared_deviations = 0
+        total_observations = 0
+        
+        for i, plots in enumerate(plot_data):
+            participant_mean = participant_means[i]
+            for value in plots:
+                deviation = value - participant_mean
+                sum_squared_deviations += deviation ** 2
+                total_observations += 1
+        
+        # Степени свободы для ошибки
+        df_error = total_observations - participants_with_plots
+        
+        if df_error <= 0:
+            return None
+        
+        # Ошибка опыта (среднеквадратичное отклонение)
+        error_mean_squared = sum_squared_deviations / df_error
+        error_mean = math.sqrt(error_mean_squared)
+        
+        # 4. НСР₀.₉₅ для разных уровней значимости
+        # t-критерий Стьюдента для α=0.05
+        t_values = {
+            3: 2.776,  # 3 повторности
+            4: 2.776,  # 4 повторности  
+            5: 2.571,  # 5 повторностей
+            6: 2.447   # 6 повторностей
+        }
+        
+        t_value = t_values.get(n_replications, 2.776)
+        
+        # НСР₀.₉₅ = t × √(2 × s² / n)
+        lsd_095 = t_value * math.sqrt(2 * error_mean_squared / n_replications)
+        
+        # 5. Точность опыта P%
+        # P% = (E / средняя урожайность) × 100
+        accuracy_percent = (error_mean / grand_mean) * 100 if grand_mean > 0 else 0
         
         return {
-            'sx': round(sx, 2),
-            'accuracy_percent': round(accuracy, 1),
-            'lsd': round(lsd, 2),
-            'error_mean': round(error_mean, 1)
+            'auto_lsd_095': round(lsd_095, 2),
+            'auto_error_mean': round(error_mean, 2),
+            'auto_accuracy_percent': round(accuracy_percent, 2),
+            'replication_count': n_replications,
+            'has_plot_data': True,
+            'participants_count': participants_with_plots,
+            'grand_mean': round(grand_mean, 2),
+            'note': 'Авторасчет для справки. Окончательное значение введите вручную.',
+            'manual_required': True,
+            'warning': 'Проверьте корректность расчета! Авторасчет может отличаться от профессионального дисперсионного анализа.'
         }
     
     def get_completion_status(self):
@@ -1416,7 +1622,16 @@ class TrialParticipant(SoftDeleteModel):
         help_text="Сорт-участник"
     )
     
-    # Статистическая группа
+    # === ОРГАНИЗАЦИОННАЯ ГРУППА ===
+    maturity_group_code = models.CharField(
+        max_length=10,
+        blank=True,
+        null=True,
+        verbose_name="Код группы",
+        help_text="Код группы спелости участника (наследуется из Trial или Application)"
+    )
+    
+    # === СТАТИСТИЧЕСКАЯ ГРУППА ===
     STAT_GROUP_CHOICES = [
         (0, 'Стандарт'),
         (1, 'Испытываемый'),
@@ -1427,17 +1642,25 @@ class TrialParticipant(SoftDeleteModel):
         help_text="0 = стандарт, 1 = испытываемый"
     )
     
-    # Результат статистической обработки (рассчитывается автоматически)
-    STAT_RESULT_CHOICES = [
-        (-1, 'Существенно ниже стандарта'),
-        (0, 'Несущественное отклонение'),
-        (1, 'Существенно выше стандарта'),
-    ]
+    # === ГРУППА ПО СТАТ. ОБРАБОТКЕ (АВТОРАСЧЕТ!) ===
     statistical_result = models.IntegerField(
-        choices=STAT_RESULT_CHOICES,
         null=True,
         blank=True,
-        help_text="Результат сравнения со стандартом (автоматически)"
+        db_index=True,
+        verbose_name="Группа по стат. обработке",
+        help_text="""АВТОРАСЧЕТ: Код группы = int((У_сорта - У_стандарта) / НСР₀.₉₅)
+
+Примеры:
+- Стандарт: 0
+- Отклонение +16.2 ц/га, НСР=5.2 → код +3
+- Отклонение +7.0 ц/га, НСР=5.2 → код +1  
+- Отклонение +2.0 ц/га, НСР=5.2 → код 0 (несущественно)
+- Отклонение -13.2 ц/га, НСР=5.2 → код -2
+
+Интерпретация:
+- Положительный код (≥1): превышение над стандартом на N НСР
+- Код 0: отклонение < НСР (статистически равен стандарту)
+- Отрицательный код (≤-1): отставание от стандарта на N НСР"""
     )
     
     participant_number = models.IntegerField(
@@ -1520,10 +1743,8 @@ class TrialParticipant(SoftDeleteModel):
     def __str__(self):
         group_mark = " (Стандарт)" if self.statistical_group == 0 else ""
         stat_mark = ""
-        if self.statistical_result == 1:
-            stat_mark = " ++"
-        elif self.statistical_result == -1:
-            stat_mark = " --"
+        if self.statistical_result is not None and self.statistical_result != 0:
+            stat_mark = f" [{self.statistical_result:+d}]"  # Показать код группы со знаком
         return f"{self.trial} - #{self.participant_number} {self.sort_record.name}{group_mark}{stat_mark}"
     
     @property
@@ -1531,63 +1752,112 @@ class TrialParticipant(SoftDeleteModel):
         """Стандарт ли этот сорт"""
         return self.statistical_group == 0
     
+    def get_statistical_result_display(self):
+        """
+        Человекочитаемое описание группы по стат. обработке
+        
+        Returns:
+            str: Описание кода группы
+        """
+        if self.statistical_result is None:
+            return "Не рассчитано (нет НСР или урожайности)"
+        
+        if self.is_standard:
+            return "Стандарт (код 0)"
+        
+        code = self.statistical_result
+        
+        if code == 0:
+            return "Несущественное отклонение (код 0)"
+        elif code > 0:
+            return f"Превышение на {code} НСР (код +{code})"
+        else:  # code < 0
+            return f"Отставание на {abs(code)} НСР (код {code})"
+    
     def calculate_statistical_result(self):
         """
-        Рассчитать статистический результат на основе НСР
+        АВТОМАТИЧЕСКИ рассчитать ГРУППУ ПО СТАТ. ОБРАБОТКЕ
         
-        Сравнивает отклонение от стандарта с НСР:
-        - Если |отклонение| > НСР и положительное → +1
-        - Если |отклонение| > НСР и отрицательное → -1
-        - Иначе → 0
+        Формула из методики (раздел III.3):
+        Код группы = ЦЕЛОЕ ЧИСЛО от (У_сорта - У_стандарта) / НСР₀.₉₅
+        
+        ВАЖНО: int() - это ЦЕЛАЯ ЧАСТЬ числа (отбрасывание дробной части), а НЕ округление!
+        
+        Примеры:
+        - У_сорта=101.5, У_стандарта=85.3, НСР=5.2 → (101.5-85.3)/5.2 = 3.115 → int() → +3
+        - У_сорта=72.1, У_стандарта=85.3, НСР=5.2 → (72.1-85.3)/5.2 = -2.538 → int() → -2
+        - У_сорта=87.0, У_стандарта=85.3, НСР=5.2 → (87.0-85.3)/5.2 = 0.326 → int() → 0
+        
+        Интерпретация:
+        - Стандарт: всегда 0
+        - Положительный код (≥1): превышение на N НСР
+        - Код 0: отклонение < НСР (статистически равен)
+        - Отрицательный код (≤-1): отставание на N НСР
+        
+        Условия работы:
+        1. Trial.lsd_095 ОБЯЗАТЕЛЬНО должен быть заполнен
+        2. У участника и стандарта должна быть урожайность
         """
+        # Шаг 1: Стандарт всегда имеет код 0
         if self.is_standard:
             self.statistical_result = 0
+            self.save()
             return
         
-        # Получить статистику опыта
-        stats = self.trial.calculate_trial_statistics()
-        if not stats:
+        # Шаг 2: Проверить что НСР введен в Trial
+        lsd = self.trial.lsd_095
+        if not lsd or lsd == 0:
+            # НСР не введен - невозможно рассчитать
+            self.statistical_result = None
+            self.save()
             return
         
-        lsd = stats['lsd']
-        
-        # Получить урожайность участника
+        # Шаг 3: Получить показатель урожайности
         try:
-            from trials_app.models import Indicator
-            yield_indicator = Indicator.objects.get(code='yield')
-        except:
+            yield_indicator = Indicator.objects.get(code='yield', is_deleted=False)
+        except Indicator.DoesNotExist:
             return
         
-        result = TrialResult.objects.filter(
+        # Шаг 4: Получить урожайность ДАННОГО участника
+        participant_result = TrialResult.objects.filter(
             participant=self,
-            indicator=yield_indicator
+            indicator=yield_indicator,
+            is_deleted=False
         ).first()
         
-        if not result or result.value is None:
+        if not participant_result or participant_result.value is None:
+            self.statistical_result = None
+            self.save()
             return
         
-        # Получить урожайность стандарта
-        standard = self.trial.get_standard_participants().first()
-        if not standard:
+        # Шаг 5: Найти стандарт
+        standard_participant = self.trial.get_standard_participants().first()
+        if not standard_participant:
             return
         
+        # Шаг 6: Получить урожайность СТАНДАРТА
         standard_result = TrialResult.objects.filter(
-            participant=standard,
-            indicator=yield_indicator
+            participant=standard_participant,
+            indicator=yield_indicator,
+            is_deleted=False
         ).first()
         
         if not standard_result or standard_result.value is None:
             return
         
-        # Отклонение от стандарта
-        deviation = result.value - standard_result.value
+        # Шаг 7: ФОРМУЛА ИЗ МЕТОДИКИ
+        # Код группы = ЦЕЛОЕ ЧИСЛО от (У_сорта - У_стандарта) / НСР₀.₉₅
+        deviation = participant_result.value - standard_result.value
         
-        # Сравнение с НСР
-        if abs(deviation) > lsd:
-            self.statistical_result = 1 if deviation > 0 else -1
-        else:
-            self.statistical_result = 0
+        # ВАЖНО: int() отбрасывает дробную часть (округление к нулю)
+        # Примеры:
+        # - int(3.7) = 3
+        # - int(-2.9) = -2
+        # - int(0.8) = 0
+        code_group = int(deviation / lsd)
         
+        # Шаг 8: Сохранить результат
+        self.statistical_result = code_group
         self.save()
 
 
@@ -1597,6 +1867,9 @@ class TrialResult(SoftDeleteModel):
     
     Хранит как итоговое значение (value), так и опциональные данные по делянкам.
     Если делянки заполнены, value рассчитывается автоматически как среднее.
+    
+    ДЕЛЯНКИ (повторности) нужны ТОЛЬКО для урожайности!
+    Для остальных показателей (вегетационный период, устойчивость и т.д.) - только value.
     """
     participant = models.ForeignKey(
         TrialParticipant,
@@ -1620,6 +1893,42 @@ class TrialResult(SoftDeleteModel):
         help_text="Среднее значение или общее значение"
     )
     
+    # === ДЕЛЯНКИ (повторности) - ОПЦИОНАЛЬНО, только для урожайности ===
+    plot_1 = models.FloatField(
+        blank=True,
+        null=True,
+        help_text="Значение с делянки 1 (повторность 1)"
+    )
+    plot_2 = models.FloatField(
+        blank=True,
+        null=True,
+        help_text="Значение с делянки 2 (повторность 2)"
+    )
+    plot_3 = models.FloatField(
+        blank=True,
+        null=True,
+        help_text="Значение с делянки 3 (повторность 3)"
+    )
+    plot_4 = models.FloatField(
+        blank=True,
+        null=True,
+        help_text="Значение с делянки 4 (повторность 4)"
+    )
+    
+    # === КОНТРОЛЬ КАЧЕСТВА ===
+    is_rejected = models.BooleanField(
+        default=False,
+        help_text="Сорт забракован (сортовая чистота <90%)"
+    )
+    rejection_reason = models.TextField(
+        blank=True,
+        null=True,
+        help_text="Причина брака (например: сортовая чистота 85%)"
+    )
+    is_restored = models.BooleanField(
+        default=False,
+        help_text="Данные восстановлены статистическим методом (при гибели делянки)"
+    )
     
     # Текстовое значение (для качественных показателей)
     text_value = models.TextField(
@@ -1674,15 +1983,32 @@ class TrialResult(SoftDeleteModel):
         return f"{self.participant.sort_record.name} - {self.indicator.name}: {self.value}"
     
     def save(self, *args, **kwargs):
-        """Сохранение результата"""
+        """
+        Сохранение результата с автоматическим расчетом value из делянок
+        
+        ЛОГИКА:
+        1. Если заполнены делянки (plot_1-4) → value рассчитывается как среднее
+        2. Иначе value берется как есть (прямой ввод)
+        """
         # Для обратной совместимости
         if self.participant:
             self.trial = self.participant.trial
             self.sort_record = self.participant.sort_record
         
+        # АВТОМАТИЧЕСКИЙ РАСЧЕТ value из делянок (если заполнены)
+        plot_values = [
+            v for v in [self.plot_1, self.plot_2, self.plot_3, self.plot_4]
+            if v is not None
+        ]
+        
+        if plot_values:
+            # Если есть хотя бы одна делянка - рассчитать среднее
+            self.value = sum(plot_values) / len(plot_values)
+        
         super().save(*args, **kwargs)
         
-        # После сохранения пересчитать статистический результат участника
+        # После сохранения пересчитать "Группу по стат. обработке" участника
+        # (только для показателя урожайности!)
         if self.participant and self.indicator.code == 'yield':
             self.participant.calculate_statistical_result()
 

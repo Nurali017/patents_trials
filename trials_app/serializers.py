@@ -615,13 +615,14 @@ class TrialSerializer(serializers.ModelSerializer):
             from trials_app.models import Indicator
             
             if trial.culture.group_culture:
-                # Получить все показатели для ГРУППЫ этой культуры (НОВАЯ ЛОГИКА)
-                auto_indicators = Indicator.objects.filter(
+                # Получить только ОБЯЗАТЕЛЬНЫЕ показатели для ГРУППЫ этой культуры
+                required_indicators = Indicator.objects.filter(
                     group_cultures=trial.culture.group_culture,
+                    is_required=True,  # Только обязательные показатели
                     is_deleted=False
                 ).distinct()
                 
-                trial.indicators.set(auto_indicators)
+                trial.indicators.set(required_indicators)
             else:
                 # Если у культуры нет группы - не назначаем показатели автоматически
                 pass
@@ -696,16 +697,83 @@ class TrialSerializer(serializers.ModelSerializer):
         return trial
 
 class TrialResultSerializer(serializers.ModelSerializer):
+    """
+    Сериализатор для результатов испытаний
+    
+    Поддерживает:
+    - Прямой ввод value
+    - Автоматический расчет value из делянок (plot_1-4)
+    - Контроль качества (is_rejected, is_restored)
+    """
     sort_name = serializers.CharField(source='sort_record.name', read_only=True, allow_null=True)
     indicator_name = serializers.CharField(source='indicator.name', read_only=True)
+    indicator_unit = serializers.CharField(source='indicator.unit', read_only=True, allow_null=True)
     created_by_name = serializers.CharField(source='created_by.username', read_only=True)
     participant_data = TrialParticipantSerializer(source='participant', read_only=True)
-    
     
     class Meta:
         model = TrialResult
         fields = '__all__'
-        read_only_fields = ['value', 'trial', 'sort_record', 'created_at', 'updated_at']
+        read_only_fields = ['trial', 'sort_record', 'created_at', 'updated_at']
+    
+    def validate_value(self, value):
+        """Валидация значения результата"""
+        if value is None:
+            return value
+        
+        # Получить indicator из initial_data
+        indicator_id = self.initial_data.get('indicator')
+        if not indicator_id:
+            return value
+        
+        try:
+            indicator = Indicator.objects.get(id=indicator_id, is_deleted=False)
+        except Indicator.DoesNotExist:
+            return value
+        
+        # Валидация баллов (0-5, шаг 0.5)
+        if indicator.unit == 'балл':
+            if value < 0 or value > 5:
+                raise serializers.ValidationError(
+                    f"Балльная оценка должна быть от 0 до 5. Получено: {value}"
+                )
+            # Проверка шага 0.5
+            if (value * 2) % 1 != 0:
+                raise serializers.ValidationError(
+                    f"Балльная оценка должна иметь шаг 0.5. Получено: {value}"
+                )
+        
+        # Валидация по validation_rules
+        if indicator.validation_rules:
+            rules = indicator.validation_rules
+            
+            if 'min_value' in rules and value < rules['min_value']:
+                raise serializers.ValidationError(
+                    f"{indicator.name}: значение {value} меньше минимального {rules['min_value']}"
+                )
+            
+            if 'max_value' in rules and value > rules['max_value']:
+                raise serializers.ValidationError(
+                    f"{indicator.name}: значение {value} больше максимального {rules['max_value']}"
+                )
+        
+        return value
+    
+    def validate(self, data):
+        """
+        Валидация всех полей результата
+        
+        ЛОГИКА:
+        1. Если заполнены делянки → value рассчитается автоматически в save()
+        2. Если is_rejected=True → должна быть причина
+        """
+        # Проверка: если сорт забракован, должна быть причина
+        if data.get('is_rejected') and not data.get('rejection_reason'):
+            raise serializers.ValidationError({
+                'rejection_reason': 'Укажите причину брака (например: сортовая чистота <90%)'
+            })
+        
+        return data
     
 
 class TrialLaboratoryResultSerializer(serializers.ModelSerializer):
