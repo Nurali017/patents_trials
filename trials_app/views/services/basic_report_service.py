@@ -216,6 +216,11 @@ class BasicReportService:
                         trial_data['standard_name'] = region_standard.name
                         trial_data['standard_current_year_yield'] = standard_data['current_year_yield']
                 
+                # Получить данные об устойчивости
+                resistance_indicators = self._get_resistance_indicators(app, region, years_range)
+                if resistance_indicators:
+                    trial_data['resistance_indicators'] = resistance_indicators
+                
                 # Получить текущий статус решения
                 decision_status = app.get_oblast_status(oblast)
                 latest_decision = app.get_latest_decision(oblast)
@@ -225,6 +230,11 @@ class BasicReportService:
                     'region': {
                         'id': region.id,
                         'name': region.name,
+                        'climate_zone': {
+                            'id': region.climate_zone.id if region.climate_zone else None,
+                            'name': region.climate_zone.name if region.climate_zone else None,
+                            'code': region.climate_zone.code if region.climate_zone else None
+                        } if region.climate_zone else None
                     },
                     'sort_record': {
                         'id': app.sort_record.id,
@@ -263,7 +273,12 @@ class BasicReportService:
                     'row_number': row_number,
                     'region': {
                         'id': region.id,
-                        'name': region.name
+                        'name': region.name,
+                        'climate_zone': {
+                            'id': region.climate_zone.id if region.climate_zone else None,
+                            'name': region.climate_zone.name if region.climate_zone else None,
+                            'code': region.climate_zone.code if region.climate_zone else None
+                        } if region.climate_zone else None
                     },
                     'sort_record': {
                         'id': sort_record.id,
@@ -405,6 +420,86 @@ class BasicReportService:
             'current_year_yield': current_year_yield,
             'has_data': len(yields_by_year) > 0
         }
+    
+    def _get_resistance_indicators(self, application, region, years_range):
+        """
+        Получить показатели устойчивости для заявки в регионе
+        
+        Args:
+            application: Заявка
+            region: Регион
+            years_range: Диапазон лет
+            
+        Returns:
+            Словарь показателей устойчивости
+        """
+        from trials_app.models import TrialResult, TrialParticipant, Indicator
+        
+        # Найти участников заявки в регионе
+        participants = TrialParticipant.objects.filter(
+            application=application,
+            trial__region=region,
+            trial__year__in=years_range,
+            is_deleted=False
+        )
+        
+        if not participants.exists():
+            return {}
+        
+        # Найти показатели устойчивости
+        resistance_indicators = Indicator.objects.filter(
+            name__icontains='устойчивость',
+            is_deleted=False
+        )
+        
+        # Получить результаты по устойчивости
+        resistance_results = TrialResult.objects.filter(
+            participant__in=participants,
+            indicator__in=resistance_indicators,
+            is_deleted=False
+        ).select_related('indicator')
+        
+        # Сгруппировать по показателям и взять среднее значение
+        indicators_data = {}
+        for result in resistance_results:
+            if result.value is not None:
+                indicator_name = result.indicator.name
+                if indicator_name not in indicators_data:
+                    indicators_data[indicator_name] = []
+                indicators_data[indicator_name].append(result.value)
+        
+        # Вычислить средние значения
+        resistance_indicators = {}
+        for indicator_name, values in indicators_data.items():
+            if values:
+                avg_value = sum(values) / len(values)
+                # Преобразовать название для API
+                api_name = self._convert_resistance_name(indicator_name)
+                resistance_indicators[api_name] = round(avg_value, 1)
+        
+        return resistance_indicators
+    
+    def _convert_resistance_name(self, indicator_name):
+        """
+        Преобразовать название показателя устойчивости для API
+        
+        Args:
+            indicator_name: Название показателя из базы
+            
+        Returns:
+            Название для API
+        """
+        name_mapping = {
+            'Устойчивость к болезням и вредителям': 'disease_resistance',
+            'Устойчивость к полеганию': 'lodging_resistance', 
+            'Устойчивость к засухе': 'drought_resistance',
+            'Устойчивость к осыпанию': 'shattering_resistance',
+            'Устойчивость к прорастанию на корню': 'sprouting_resistance',
+            'Устойчивость к пониканию / ломкости колоса': 'lodging_resistance',
+            'Устойчивость к цветушности': 'bolting_resistance'
+        }
+        
+        return name_mapping.get(indicator_name, indicator_name.lower().replace(' ', '_'))
     
     def _get_maturity_group_name(self, group_code):
         """Получить название группы спелости по коду"""

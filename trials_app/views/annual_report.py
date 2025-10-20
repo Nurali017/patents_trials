@@ -178,6 +178,9 @@ class AnnualReportViewSet(viewsets.ViewSet):
         # Получить данные для таблицы по методике
         methodology_data = self._generate_methodology_table(oblast, year_int)
         
+        # Добавить рекомендации из SummaryService
+        methodology_data = self._add_summary_recommendations(methodology_data, oblast, year_int)
+        
         return Response(methodology_data)
     
     def _generate_methodology_table(self, oblast, year):
@@ -451,3 +454,53 @@ class AnnualReportViewSet(viewsets.ViewSet):
             'warnings': basic_data['warnings'],
             'has_warnings': basic_data['has_warnings']
         }
+    
+    def _add_summary_recommendations(self, methodology_data, oblast, year):
+        """
+        Добавить рекомендации из SummaryService в methodology_table
+        
+        Args:
+            methodology_data: Данные таблицы по методике
+            oblast: Область
+            year: Год
+            
+        Returns:
+            Обновленные данные с рекомендациями
+        """
+        from .services import SummaryService, BasicReportService
+        
+        # Получить базовые данные для SummaryService
+        basic_service = BasicReportService()
+        basic_data = basic_service.generate_basic_report(oblast, year)
+        
+        # Получить рекомендации из SummaryService
+        summary_service = SummaryService()
+        summary_items = summary_service.generate_summary_items(oblast, year, basic_data['detailed_items'])
+        
+        # Создать словарь рекомендаций по application_id
+        recommendations_map = {}
+        for item in summary_items:
+            recommendations_map[item['application_id']] = {
+                'statistical_analysis': item.get('statistical_analysis', {}),
+                'evaluation_scores': item.get('evaluation_scores', {}),
+                'recommendation': item.get('recommendation', {}),
+                'summary': item.get('summary', {})
+            }
+        
+        # Добавить рекомендации к каждому сорту в methodology_table
+        for region_name, groups in methodology_data['methodology_table'].items():
+            for group_code, group_data in groups.items():
+                for sort_data in group_data['sorts']:
+                    # Найти рекомендации для данного сорта
+                    application_number = sort_data.get('application_number')
+                    if application_number:
+                        # Найти application_id по номеру заявки
+                        for item in basic_data['detailed_items']:
+                            if (item.get('application_number') == application_number and 
+                                not item.get('is_standard', False)):
+                                app_id = item.get('application_id')
+                                if app_id and app_id in recommendations_map:
+                                    sort_data['recommendations'] = recommendations_map[app_id]
+                                    break
+        
+        return methodology_data
