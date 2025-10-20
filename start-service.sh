@@ -91,3 +91,5 @@ echo "💡 Для остановки: docker-compose stop trials-service"
 
 
 
+
+

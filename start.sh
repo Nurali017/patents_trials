@@ -44,7 +44,7 @@ start_service_only() {
     fi
     
     echo "🔧 Запуск Микросервиса..."
-    docker-compose up --build -d trials-service
+    docker-compose up --build -d trials_service
     echo ""
     echo "✅ Микросервис запущен!"
     show_info
@@ -78,7 +78,7 @@ show_logs() {
     
     case $log_choice in
         1)
-            docker-compose logs -f trials-service
+            docker-compose logs -f trials_service
             ;;
         2)
             docker-compose logs -f trials-db

@@ -26,9 +26,8 @@ router.register(r'trial-participants', views.TrialParticipantViewSet)  # Уча�
 router.register(r'trial-results', views.TrialResultViewSet)  # Результаты измерений
 router.register(r'documents', views.DocumentViewSet)  # Документы
 
-# Годовые таблицы решений
-router.register(r'annual-decision-tables', views.AnnualDecisionTableViewSet, basename='annualdecisiontable')
-router.register(r'annual-decision-items', views.AnnualDecisionItemViewSet, basename='annualdecisionitem')
+# Годовые отчеты и решения (новая логика)
+router.register(r'annual-reports', views.AnnualReportViewSet, basename='annualreport')
 
 urlpatterns = [
     path('', include(router.urls)),

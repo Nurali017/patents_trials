@@ -257,6 +257,10 @@ class ApplicationSerializer(serializers.ModelSerializer):
     # Распределения из таблицы (для обратной совместимости с фронтом)
     planned_distributions = serializers.SerializerMethodField()
     
+    # Статусы по областям
+    oblast_statuses = serializers.SerializerMethodField()
+    oblast_status_summary = serializers.SerializerMethodField()
+    
     class Meta:
         model = Application
         fields = '__all__'
@@ -330,6 +334,14 @@ class ApplicationSerializer(serializers.ModelSerializer):
             result.append(dist_data)
         
         return result
+    
+    def get_oblast_statuses(self, obj):
+        """Получить статусы по областям"""
+        return obj.get_oblast_statuses()
+    
+    def get_oblast_status_summary(self, obj):
+        """Получить сводку по статусам областей"""
+        return obj.get_oblast_status_summary()
     
     def validate_applicant_inn_bin(self, value):
         """Валидация ИНН/БИН (должен состоять из 12 цифр)"""

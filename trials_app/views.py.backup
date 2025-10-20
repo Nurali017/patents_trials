@@ -4082,10 +4082,10 @@ class TrialPlanViewSet(viewsets.ModelViewSet):
 
 
 # ============================================================================
-# ГОДОВЫЕ ТАБЛИЦЫ РЕШЕНИЙ
+# ГОДОВЫЕ ОТЧЕТЫ И РЕШЕНИЯ (НОВАЯ ЛОГИКА)
 # ============================================================================
 
-class AnnualDecisionTableViewSet(viewsets.ModelViewSet):
+class AnnualReportViewSet(viewsets.ViewSet):
     """
     Управление годовыми таблицами решений
     

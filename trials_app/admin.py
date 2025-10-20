@@ -1,8 +1,8 @@
 from django.contrib import admin
 from .models import (
     Oblast, Region, ClimateZone, Indicator, GroupCulture, Culture, Originator, SortOriginator, SortRecord, 
-    Application, PlannedDistribution, TrialType, Trial, TrialParticipant, TrialResult, 
-    TrialLaboratoryResult, Document, AnnualDecisionTable, AnnualDecisionItem
+    Application, ApplicationDecisionHistory, PlannedDistribution, TrialType, Trial, TrialParticipant, TrialResult, 
+    TrialLaboratoryResult, Document
 )
 
 @admin.register(Oblast)
@@ -190,13 +190,37 @@ class SortRecordAdmin(admin.ModelAdmin):
     sync_with_patents.short_description = "Синхронизировать с Patents Service"
 
 
+@admin.register(ApplicationDecisionHistory)
+class ApplicationDecisionHistoryAdmin(admin.ModelAdmin):
+    """Админка для истории решений"""
+    list_display = ['application', 'oblast', 'year', 'decision', 'decision_date', 'decided_by']
+    list_filter = ['decision', 'year', 'decision_date']
+    search_fields = ['application__application_number', 'oblast__name', 'decision_justification']
+    readonly_fields = ['created_at', 'updated_at']
+    date_hierarchy = 'decision_date'
+    
+    fieldsets = (
+        ('Основная информация', {
+            'fields': ('application', 'oblast', 'year', 'decision')
+        }),
+        ('Детали решения', {
+            'fields': ('decision_date', 'decision_justification', 'decided_by')
+        }),
+        ('Данные испытаний', {
+            'fields': ('average_yield', 'years_tested_total')
+        }),
+        ('Системные поля', {
+            'fields': ('created_at', 'updated_at'),
+            'classes': ('collapse',)
+        }),
+    )
+
 @admin.register(Application)
 class ApplicationAdmin(admin.ModelAdmin):
     """Админка для заявок на испытания"""
     list_display = ['application_number', 'sort_record', 'applicant', 'status', 'submission_date', 'created_at']
     search_fields = ['application_number', 'applicant', 'purpose']
     list_filter = ['status', 'submission_date', 'created_at', 'is_deleted']
-    filter_horizontal = ['target_oblasts']
     date_hierarchy = 'submission_date'
     readonly_fields = ['created_at', 'updated_at']
     
@@ -211,7 +235,7 @@ class ApplicationAdmin(admin.ModelAdmin):
             'fields': ('applicant', 'applicant_inn_bin', 'contact_person_name', 'contact_person_phone', 'contact_person_email', 'maturity_group', 'purpose')
         }),
         ('Целевые области', {
-            'fields': ('target_oblasts',)
+            'fields': ()  # target_oblasts теперь through поле
         }),
         ('Системные поля', {
             'fields': ('created_by', 'created_at', 'updated_at', 'is_deleted', 'deleted_at'),
@@ -353,8 +377,8 @@ class TrialResultAdmin(admin.ModelAdmin):
 @admin.register(TrialLaboratoryResult)
 class TrialLaboratoryResultAdmin(admin.ModelAdmin):
     """Админка для лабораторных результатов испытаний"""
-    list_display = ['trial', 'indicator', 'participant', 'value', 'laboratory_code', 'analysis_date', 'created_at']
-    search_fields = ['trial__region__name', 'indicator__name', 'laboratory_code', 'participant__sort_record__name']
+    list_display = ['trial', 'indicator', 'participant', 'value', 'analysis_date', 'created_at']
+    search_fields = ['trial__region__name', 'indicator__name', 'participant__sort_record__name']
     list_filter = ['analysis_date', 'indicator', 'trial__region__oblast', 'created_at', 'is_deleted']
     date_hierarchy = 'analysis_date'
     readonly_fields = ['created_at', 'updated_at']
@@ -367,7 +391,7 @@ class TrialLaboratoryResultAdmin(admin.ModelAdmin):
             'fields': ('value', 'text_value')
         }),
         ('Лабораторные данные', {
-            'fields': ('laboratory_code', 'analysis_date', 'sample_weight_kg', 'notes')
+            'fields': ('analysis_date', 'sample_weight_kg', 'notes')
         }),
         ('Системные поля', {
             'fields': ('created_by', 'created_at', 'updated_at', 'is_deleted', 'deleted_at'),
@@ -402,190 +426,3 @@ class DocumentAdmin(admin.ModelAdmin):
             'classes': ('collapse',)
         }),
     )
-
-
-class AnnualDecisionItemInline(admin.TabularInline):
-    """Inline для элементов годовой таблицы"""
-    model = AnnualDecisionItem
-    extra = 0
-    fields = ['row_number', 'sort_record', 'maturity_group', 'average_yield', 'decision', 'decision_date']
-    readonly_fields = ['average_yield', 'decision_date']
-    
-    def has_add_permission(self, request, obj=None):
-        """Запретить добавление через inline если таблица finalized"""
-        if obj and obj.status == 'finalized':
-            return False
-        return super().has_add_permission(request, obj)
-    
-    def has_change_permission(self, request, obj=None):
-        """Запретить редактирование через inline если таблица finalized"""
-        if obj and obj.status == 'finalized':
-            return False
-        return super().has_change_permission(request, obj)
-    
-    def has_delete_permission(self, request, obj=None):
-        """Запретить удаление через inline если таблица finalized"""
-        if obj and obj.status == 'finalized':
-            return False
-        return super().has_delete_permission(request, obj)
-
-
-@admin.register(AnnualDecisionTable)
-class AnnualDecisionTableAdmin(admin.ModelAdmin):
-    """Админка для годовых таблиц решений"""
-    list_display = ['title', 'year', 'oblast', 'culture', 'status', 'items_display', 'progress_display', 'created_at']
-    search_fields = ['title', 'oblast__name', 'culture__name']
-    list_filter = ['year', 'oblast', 'culture', 'status', 'created_at', 'is_deleted']
-    date_hierarchy = 'created_at'
-    readonly_fields = ['created_at', 'updated_at', 'finalized_date', 'items_display', 'progress_display', 'statistics_display']
-    inlines = [AnnualDecisionItemInline]
-    
-    fieldsets = (
-        ('Основная информация', {
-            'fields': ('year', 'oblast', 'culture', 'title')
-        }),
-        ('Статус', {
-            'fields': ('status', 'finalized_date', 'finalized_by')
-        }),
-        ('Статистика', {
-            'fields': ('items_display', 'progress_display', 'statistics_display'),
-            'classes': ('collapse',)
-        }),
-        ('Системные поля', {
-            'fields': ('created_by', 'created_at', 'updated_at', 'is_deleted', 'deleted_at'),
-            'classes': ('collapse',)
-        }),
-    )
-    
-    def items_display(self, obj):
-        """Количество сортов"""
-        count = obj.get_items_count()
-        return f"{count} сортов"
-    items_display.short_description = "Сортов в таблице"
-    
-    def progress_display(self, obj):
-        """Прогресс принятия решений"""
-        progress = obj.get_progress_percentage()
-        decided = obj.get_decisions_count()
-        total = obj.get_items_count()
-        return f"{decided}/{total} ({progress}%)"
-    progress_display.short_description = "Прогресс решений"
-    
-    def statistics_display(self, obj):
-        """Статистика решений"""
-        stats = obj.get_statistics()
-        return f"✅ {stats['approved']} | ❌ {stats['removed']} | 🔄 {stats['continue']} | ⏳ {stats['pending']}"
-    statistics_display.short_description = "Статистика"
-    
-    def get_readonly_fields(self, request, obj=None):
-        """Запретить редактирование некоторых полей для finalized таблиц"""
-        readonly = list(self.readonly_fields)
-        if obj and obj.status == 'finalized':
-            readonly.extend(['year', 'oblast', 'culture', 'status'])
-        if obj:
-            readonly.append('created_by')
-        return readonly
-    
-    actions = ['finalize_tables']
-    
-    def finalize_tables(self, request, queryset):
-        """Завершить выбранные таблицы"""
-        count = 0
-        errors = []
-        for table in queryset:
-            if table.status == 'finalized':
-                errors.append(f'{table.title} - уже завершена')
-                continue
-            
-            if not table.is_all_decisions_made():
-                errors.append(f'{table.title} - не все решения приняты ({table.get_decisions_count()}/{table.get_items_count()})')
-                continue
-            
-            table.status = 'finalized'
-            table.finalized_by = request.user
-            table.finalized_date = timezone.now().date()
-            table.save()
-            count += 1
-        
-        if count > 0:
-            self.message_user(request, f'Завершено {count} таблиц')
-        if errors:
-            self.message_user(request, 'Ошибки: ' + '; '.join(errors), level='warning')
-    
-    finalize_tables.short_description = "Завершить таблицы"
-
-
-@admin.register(AnnualDecisionItem)
-class AnnualDecisionItemAdmin(admin.ModelAdmin):
-    """Админка для элементов годовой таблицы"""
-    list_display = ['row_number', 'sort_record', 'annual_table', 'maturity_group', 'years_tested', 'average_yield', 'decision', 'decision_date', 'decided_by']
-    search_fields = ['sort_record__name', 'annual_table__title', 'decision_justification']
-    list_filter = ['decision', 'years_tested', 'annual_table__oblast', 'annual_table__year', 'decision_date', 'is_deleted']
-    date_hierarchy = 'decision_date'
-    readonly_fields = ['yields_by_year', 'average_yield', 'deviation_from_standard', 'last_year_data', 'created_at', 'updated_at']
-    
-    fieldsets = (
-        ('Основная информация', {
-            'fields': ('annual_table', 'row_number', 'sort_record', 'maturity_group')
-        }),
-        ('Данные испытаний', {
-            'fields': ('years_tested', 'year_started', 'yields_by_year', 'average_yield', 'deviation_from_standard'),
-            'classes': ('collapse',)
-        }),
-        ('Показатели качества', {
-            'fields': ('last_year_data',),
-            'classes': ('collapse',)
-        }),
-        ('Решение', {
-            'fields': ('decision', 'decision_justification', 'decision_recommendations', 'recommended_zones')
-        }),
-        ('Продление испытаний', {
-            'fields': ('continue_reason', 'continue_until_year'),
-            'classes': ('collapse',)
-        }),
-        ('Снятие с испытаний', {
-            'fields': ('removal_reason',),
-            'classes': ('collapse',)
-        }),
-        ('Метаданные решения', {
-            'fields': ('decision_date', 'decided_by')
-        }),
-        ('Системные поля', {
-            'fields': ('created_at', 'updated_at', 'is_deleted', 'deleted_at'),
-            'classes': ('collapse',)
-        }),
-    )
-    
-    def get_readonly_fields(self, request, obj=None):
-        """Запретить редактирование для finalized таблиц"""
-        readonly = list(self.readonly_fields)
-        if obj and obj.annual_table.status == 'finalized':
-            readonly.extend(['decision', 'decision_justification', 'decision_recommendations', 'recommended_zones', 'continue_reason', 'continue_until_year', 'removal_reason'])
-        return readonly
-    
-    actions = ['refresh_trial_data', 'reset_decisions']
-    
-    def refresh_trial_data(self, request, queryset):
-        """Обновить данные из испытаний для выбранных элементов"""
-        count = 0
-        for item in queryset:
-            if item.annual_table.status == 'finalized':
-                continue
-            item.aggregate_trial_data()
-            count += 1
-        self.message_user(request, f'Обновлено {count} элементов')
-    refresh_trial_data.short_description = "Обновить данные из испытаний"
-    
-    def reset_decisions(self, request, queryset):
-        """Сбросить решения для выбранных элементов"""
-        count = 0
-        for item in queryset:
-            if item.annual_table.status == 'finalized':
-                continue
-            item.decision = 'pending'
-            item.decision_date = None
-            item.decided_by = None
-            item.save()
-            count += 1
-        self.message_user(request, f'Сброшено {count} решений')
-    reset_decisions.short_description = "Сбросить решения"

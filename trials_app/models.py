@@ -684,6 +684,87 @@ class SortRecord(SoftDeleteModel):
                 )
 
 
+class ApplicationDecisionHistory(models.Model):
+    """
+    История решений по заявке в области по годам
+    
+    Хранит историю решений для отслеживания прогресса сорта по годам.
+    Например: 2023 - continue, 2024 - continue, 2025 - approved
+    """
+    DECISION_CHOICES = [
+        ('continue', 'Продолжить испытания'),
+        ('approved', 'Одобрено к включению в Госреестр'),
+        ('rejected', 'Снять с испытаний'),
+    ]
+    
+    application = models.ForeignKey(
+        'Application',
+        on_delete=models.CASCADE,
+        related_name='decision_history',
+        help_text="Заявка"
+    )
+    oblast = models.ForeignKey(
+        Oblast,
+        on_delete=models.CASCADE,
+        related_name='application_decision_history',
+        help_text="Область"
+    )
+    year = models.IntegerField(
+        help_text="Год решения (например: 2024)"
+    )
+    
+    # Решение
+    decision = models.CharField(
+        max_length=20,
+        choices=DECISION_CHOICES,
+        help_text="Решение по сорту за год"
+    )
+    decision_date = models.DateField(
+        help_text="Дата принятия решения"
+    )
+    decision_justification = models.TextField(
+        blank=True,
+        null=True,
+        help_text="Обоснование принятого решения"
+    )
+    decided_by = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='decisions_made',
+        help_text="Кто принял решение"
+    )
+    
+    # Опционально: агрегированные данные за год для быстрого доступа
+    average_yield = models.FloatField(
+        null=True,
+        blank=True,
+        help_text="Средняя урожайность за год (ц/га)"
+    )
+    years_tested_total = models.IntegerField(
+        default=1,
+        help_text="Общее количество лет испытаний на момент решения"
+    )
+    
+    # Метаданные
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    class Meta:
+        verbose_name = "История решения"
+        verbose_name_plural = "История решений"
+        ordering = ['-year', '-decision_date']
+        unique_together = [['application', 'oblast', 'year']]
+        indexes = [
+            models.Index(fields=['application', 'oblast', 'year']),
+            models.Index(fields=['decision', 'year']),
+        ]
+    
+    def __str__(self):
+        return f"{self.application.application_number} - {self.oblast.name} - {self.year}: {self.get_decision_display()}"
+
+
 class Application(SoftDeleteModel):
     """
     Заявка на сортоиспытание
@@ -807,6 +888,217 @@ class Application(SoftDeleteModel):
     def __str__(self):
         return f"{self.application_number} - {self.sort_record.name}"
     
+    def update_oblast_status(self, oblast, new_status, trial_plan=None, trial=None):
+        """
+        Обновить статус заявки для конкретной области
+        
+        Args:
+            oblast: Область
+            new_status: Новый статус
+            trial_plan: Связанный план испытаний (опционально)
+            trial: Связанное испытание (опционально)
+        """
+        from django.db import connection
+        
+        with connection.cursor() as cursor:
+            # Проверить, существует ли запись
+            cursor.execute("""
+                SELECT id FROM trials_app_application_target_oblasts 
+                WHERE application_id = %s AND oblast_id = %s
+            """, [self.id, oblast.id])
+            
+            if cursor.fetchone():
+                # Обновить существующую запись
+                cursor.execute("""
+                    UPDATE trials_app_application_target_oblasts 
+                    SET status = %s, trial_plan_id = %s, trial_id = %s, 
+                        updated_at = NOW()
+                    WHERE application_id = %s AND oblast_id = %s
+                """, [new_status, trial_plan.id if trial_plan else None, 
+                      trial.id if trial else None, 
+                      self.id, oblast.id])
+            else:
+                # Создать новую запись
+                cursor.execute("""
+                    INSERT INTO trials_app_application_target_oblasts 
+                    (application_id, oblast_id, status, trial_plan_id, trial_id, 
+                     created_at, updated_at)
+                    VALUES (%s, %s, %s, %s, %s, NOW(), NOW())
+                """, [self.id, oblast.id, new_status, 
+                      trial_plan.id if trial_plan else None,
+                      trial.id if trial else None])
+        
+        # Обновить общий статус заявки на основе статусов по областям
+        self._update_overall_status()
+    
+    def get_oblast_status(self, oblast):
+        """
+        Получить статус заявки для конкретной области
+        
+        Args:
+            oblast: Область
+            
+        Returns:
+            str: Статус заявки для области
+        """
+        from django.db import connection
+        
+        with connection.cursor() as cursor:
+            cursor.execute("""
+                SELECT status FROM trials_app_application_target_oblasts 
+                WHERE application_id = %s AND oblast_id = %s
+            """, [self.id, oblast.id])
+            
+            result = cursor.fetchone()
+            return result[0] if result else 'planned'
+    
+    def get_all_oblast_statuses(self):
+        """
+        Получить все статусы заявки по областям
+        
+        Returns:
+            list: Список словарей со статусами
+        """
+        from django.db import connection
+        
+        with connection.cursor() as cursor:
+            cursor.execute("""
+                SELECT oblast_id, status, trial_plan_id, trial_id, 
+                       decision_date, decision_justification, decided_by_id, decision_year
+                FROM trials_app_application_target_oblasts 
+                WHERE application_id = %s
+            """, [self.id])
+            
+            return [
+                {
+                    'oblast_id': row[0],
+                    'status': row[1],
+                    'trial_plan_id': row[2],
+                    'trial_id': row[3],
+                    'decision_date': row[4],
+                    'decision_justification': row[5],
+                    'decided_by_id': row[6],
+                    'decision_year': row[7]
+                }
+                for row in cursor.fetchall()
+            ]
+    
+    def _update_overall_status(self):
+        """
+        Обновить общий статус заявки на основе статусов по областям
+        """
+        oblast_statuses = self.get_all_oblast_statuses()
+        
+        if not oblast_statuses:
+            self.status = 'draft'
+        elif all(status['status'] == 'approved' for status in oblast_statuses):
+            self.status = 'registered'
+        elif all(status['status'] in ['approved', 'rejected'] for status in oblast_statuses):
+            self.status = 'completed'
+        elif any(status['status'] in ['trial_in_progress', 'trial_completed', 'decision_pending'] for status in oblast_statuses):
+            self.status = 'in_progress'
+        elif any(status['status'] in ['trial_plan_created', 'trial_created'] for status in oblast_statuses):
+            self.status = 'distributed'
+        else:
+            self.status = 'submitted'
+        
+        self.save()
+    
+    def make_decision(self, oblast, year, decision, justification=None, decided_by=None, average_yield=None):
+        """
+        Принять решение по сорту в области за год
+        
+        Args:
+            oblast: Область
+            year: Год решения
+            decision: Решение ('continue', 'approved', 'rejected')
+            justification: Обоснование решения
+            decided_by: Кто принял решение
+            average_yield: Средняя урожайность за год (опционально)
+        
+        Returns:
+            ApplicationDecisionHistory: Созданная запись решения
+        """
+        from django.utils import timezone
+        
+        # Подсчитать общее количество лет испытаний
+        years_tested = ApplicationDecisionHistory.objects.filter(
+            application=self,
+            oblast=oblast,
+            year__lte=year
+        ).count() + 1
+        
+        # Создать запись в истории
+        decision_history = ApplicationDecisionHistory.objects.create(
+            application=self,
+            oblast=oblast,
+            year=year,
+            decision=decision,
+            decision_date=timezone.now().date(),
+            decision_justification=justification,
+            decided_by=decided_by,
+            average_yield=average_yield,
+            years_tested_total=years_tested
+        )
+        
+        # Обновить текущий статус в trials_app_application_target_oblasts
+        from django.db import connection
+        
+        with connection.cursor() as cursor:
+            cursor.execute("""
+                UPDATE trials_app_application_target_oblasts 
+                SET status = %s, 
+                    decision_date = %s,
+                    decision_justification = %s,
+                    decided_by_id = %s,
+                    decision_year = %s,
+                    updated_at = NOW()
+                WHERE application_id = %s AND oblast_id = %s
+            """, [
+                decision,
+                timezone.now().date(),
+                justification,
+                decided_by.id if decided_by else None,
+                year,
+                self.id,
+                oblast.id
+            ])
+        
+        # Обновить общий статус заявки
+        self._update_overall_status()
+        
+        return decision_history
+    
+    def get_decision_history(self, oblast=None):
+        """
+        Получить историю решений
+        
+        Args:
+            oblast: Область (опционально, для фильтрации)
+        
+        Returns:
+            QuerySet: История решений
+        """
+        history = ApplicationDecisionHistory.objects.filter(application=self)
+        if oblast:
+            history = history.filter(oblast=oblast)
+        return history.order_by('-year')
+    
+    def get_latest_decision(self, oblast):
+        """
+        Получить последнее решение для области
+        
+        Args:
+            oblast: Область
+        
+        Returns:
+            ApplicationDecisionHistory или None
+        """
+        return ApplicationDecisionHistory.objects.filter(
+            application=self,
+            oblast=oblast
+        ).order_by('-year').first()
+    
     def get_missing_mandatory_documents(self):
         """
         Проверить наличие обязательных документов и вернуть список отсутствующих
@@ -840,6 +1132,43 @@ class Application(SoftDeleteModel):
             bool: True если все обязательные документы загружены
         """
         return len(self.get_missing_mandatory_documents()) == 0
+    
+    def get_oblast_statuses(self):
+        """
+        Получить статусы по областям (алиас для get_all_oblast_statuses)
+        
+        Returns:
+            list: Список словарей со статусами
+        """
+        return self.get_all_oblast_statuses()
+    
+    def get_oblast_status_summary(self):
+        """
+        Получить сводку по статусам областей
+        
+        Returns:
+            dict: Сводка по статусам
+        """
+        oblast_statuses = self.get_all_oblast_statuses()
+        
+        summary = {
+            'total_oblasts': len(oblast_statuses),
+            'planned': 0,
+            'trial_plan_created': 0,
+            'trial_created': 0,
+            'trial_completed': 0,
+            'decision_pending': 0,
+            'approved': 0,
+            'continue': 0,
+            'rejected': 0
+        }
+        
+        for status in oblast_statuses:
+            status_name = status['status']
+            if status_name in summary:
+                summary[status_name] += 1
+        
+        return summary
 
 
 class PlannedDistribution(SoftDeleteModel):
@@ -1399,6 +1728,31 @@ class Trial(SoftDeleteModel):
         """Получить испытываемые сорта"""
         return self.participants.filter(statistical_group=1)
     
+    def get_best_standard_participant(self):
+        """Получить лучший стандарт по урожайности"""
+        from .models import TrialResult
+        
+        standards = self.get_standard_participants()
+        if not standards.exists():
+            return None
+            
+        best_standard = None
+        best_yield = 0
+        
+        for standard in standards:
+            yield_result = TrialResult.objects.filter(
+                participant=standard,
+                indicator__code='yield',
+                is_deleted=False
+            ).first()
+            
+            if yield_result and yield_result.value:
+                if yield_result.value > best_yield:
+                    best_yield = yield_result.value
+                    best_standard = standard
+        
+        return best_standard
+    
     def calculate_trial_statistics(self):
         """
         ВОЗВРАЩАЕТ готовую статистику опыта (введенную вручную)
@@ -1512,8 +1866,9 @@ class Trial(SoftDeleteModel):
                 sum_squared_deviations += deviation ** 2
                 total_observations += 1
         
-        # Степени свободы для ошибки
-        df_error = total_observations - participants_with_plots
+        # Степени свободы для ошибки (по методике ГСИ)
+        # ∂₀ = (N-1) × (n-1), где N - количество сортов, n - количество повторений
+        df_error = (participants_with_plots - 1) * (n_replications - 1)
         
         if df_error <= 0:
             return None
@@ -1522,19 +1877,26 @@ class Trial(SoftDeleteModel):
         error_mean_squared = sum_squared_deviations / df_error
         error_mean = math.sqrt(error_mean_squared)
         
-        # 4. НСР₀.₉₅ для разных уровней значимости
-        # t-критерий Стьюдента для α=0.05
-        t_values = {
-            3: 2.776,  # 3 повторности
-            4: 2.776,  # 4 повторности  
-            5: 2.571,  # 5 повторностей
-            6: 2.447   # 6 повторностей
+        # 4. НСР₀.₉₅ по методике ГСИ (Приложение 39)
+        # Коэффициенты K для разных степеней свободы ошибки
+        K_values = {
+            6: 2.45,   # ∂₀ = 6
+            7: 2.36,   # ∂₀ = 7
+            8: 2.31,   # ∂₀ = 8
+            9: 3.23,   # ∂₀ = 9
+            10: 2.23,  # ∂₀ = 10
+            11: 2.20,  # ∂₀ = 11
+            12: 2.18,  # ∂₀ = 12
+            15: 2.13,  # ∂₀ = 15
+            20: 2.09,  # ∂₀ = 20
+            30: 2.04,  # ∂₀ = 30
+            60: 2.00   # ∂₀ = 60
         }
         
-        t_value = t_values.get(n_replications, 2.776)
+        K = K_values.get(df_error, 2.776)  # Fallback к t-критерию если нет в таблице
         
-        # НСР₀.₉₅ = t × √(2 × s² / n)
-        lsd_095 = t_value * math.sqrt(2 * error_mean_squared / n_replications)
+        # НСР₀.₉₅ = K × E (по методике ГСИ)
+        lsd_095 = K * error_mean
         
         # 5. Точность опыта P%
         # P% = (E / средняя урожайность) × 100
@@ -1831,7 +2193,7 @@ class TrialParticipant(SoftDeleteModel):
             return
         
         # Шаг 5: Найти стандарт
-        standard_participant = self.trial.get_standard_participants().first()
+        standard_participant = self.trial.get_best_standard_participant()
         if not standard_participant:
             return
         
@@ -2066,12 +2428,7 @@ class TrialLaboratoryResult(SoftDeleteModel):
     )
     
     # Метаданные лабораторного анализа
-    laboratory_code = models.CharField(
-        max_length=100,
-        blank=True,
-        null=True,
-        help_text="Код пробы в лаборатории (LAB-2025-001-ALM)"
-    )
+    # laboratory_code убран - не нужен, так как на один Trial один набор результатов
     analysis_date = models.DateField(
         null=True,
         blank=True,
@@ -2709,6 +3066,83 @@ class AnnualDecisionTable(SoftDeleteModel):
             'continue': items.filter(decision='continue').count(),
             'pending': items.filter(decision='pending').count(),
         }
+    
+    @classmethod
+    def create_with_auto_populate(cls, year, oblast_id, culture_id=None, include_years=None, created_by=None):
+        """
+        Создать годовую таблицу решений с автоматическим заполнением
+        
+        Args:
+            year: год таблицы (например: 2024)
+            oblast_id: ID области
+            culture_id: ID культуры (опционально)
+            include_years: список годов для включения (например: [2021, 2022, 2024])
+            created_by: пользователь, создающий таблицу
+            
+        Returns:
+            AnnualDecisionTable: созданная таблица
+        """
+        from django.contrib.auth import get_user_model
+        User = get_user_model()
+        
+        # Получить объекты
+        oblast = Oblast.objects.get(id=oblast_id)
+        # Culture находится в Patents Service, не в Trials Service
+        # culture_id используется только для фильтрации заявок
+        
+        # Создать таблицу
+        table = cls.objects.create(
+            year=year,
+            oblast=oblast,
+            culture=None,  # Culture не хранится в Trials Service
+            created_by=created_by or User.objects.first()
+        )
+        
+        # Автоматически определить годы для включения если не указаны
+        if include_years is None:
+            include_years = [year - 3, year - 2, year - 1, year]
+        
+        # Найти все заявки для области
+        applications = Application.objects.filter(
+            target_oblasts=oblast,
+            is_deleted=False
+        )
+        
+        # Если заявок нет для этой области, попробовать найти заявки без привязки к области
+        if not applications.exists():
+            applications = Application.objects.filter(
+                is_deleted=False
+            )[:10]  # Взять первые 10 заявок для тестирования
+        
+        # Фильтрация по культуре через Patents Service API
+        # (culture_id используется только для логики, не для прямого фильтра)
+        # В реальной реализации нужно будет интегрироваться с Patents Service
+        
+        # Создать элементы таблицы для каждого сорта
+        row_number = 1
+        for application in applications:
+            # Проверить, есть ли уже элемент для этого сорта
+            if not table.items.filter(sort_record=application.sort_record).exists():
+                item = AnnualDecisionItem.objects.create(
+                    annual_table=table,
+                    row_number=row_number,
+                    sort_record=application.sort_record,
+                    decision='pending'
+                )
+                
+                # Агрегировать данные с учетом указанных годов
+                item.aggregate_trial_data(include_years=include_years)
+                
+                # Обновить статус заявки для области
+                application.update_oblast_status(
+                    oblast=table.oblast,
+                    new_status='decision_pending',
+                    annual_decision_item=item
+                )
+                
+                row_number += 1
+        
+        return table
 
 
 class AnnualDecisionItem(SoftDeleteModel):
@@ -2791,9 +3225,12 @@ class AnnualDecisionItem(SoftDeleteModel):
     
     # Период испытаний
     years_tested = models.IntegerField(
+        default=0,
         help_text="Количество лет испытаний (1, 2 или 3)"
     )
     year_started = models.IntegerField(
+        null=True,
+        blank=True,
         help_text="Год начала испытаний (например: 2022)"
     )
     
@@ -2890,7 +3327,55 @@ class AnnualDecisionItem(SoftDeleteModel):
     def __str__(self):
         return f"№{self.row_number} - {self.sort_record.name} ({self.get_decision_display()})"
     
-    def aggregate_trial_data(self):
+    def save(self, *args, **kwargs):
+        """Переопределить save для обновления статуса заявки при изменении решения"""
+        is_new = self.pk is None
+        old_decision = None
+        
+        if not is_new:
+            try:
+                old_instance = AnnualDecisionItem.objects.get(pk=self.pk)
+                old_decision = old_instance.decision
+            except AnnualDecisionItem.DoesNotExist:
+                pass
+        
+        super().save(*args, **kwargs)
+        
+        # Если решение изменилось, обновить статус заявки
+        if not is_new and old_decision != self.decision and self.decision != 'pending':
+            self._update_application_status()
+    
+    def _update_application_status(self):
+        """Обновить статус заявки при принятии решения"""
+        # Найти заявку для этого сорта в области
+        try:
+            application = Application.objects.get(
+                sort_record=self.sort_record,
+                target_oblasts=self.annual_table.oblast,
+                is_deleted=False
+            )
+            
+            # Определить новый статус на основе решения
+            if self.decision == 'approved':
+                new_status = 'approved'
+            elif self.decision == 'rejected':
+                new_status = 'rejected'
+            elif self.decision == 'continue':
+                new_status = 'continue'
+            else:
+                new_status = 'decision_made'
+            
+            # Обновить статус заявки для области
+            application.update_oblast_status(
+                oblast=self.annual_table.oblast,
+                new_status=new_status,
+                annual_decision_item=self
+            )
+            
+        except Application.DoesNotExist:
+            pass
+    
+    def aggregate_trial_data(self, include_years=None):
         """
         Агрегировать данные из испытаний сорта в области
         
@@ -2902,6 +3387,9 @@ class AnnualDecisionItem(SoftDeleteModel):
         - average_yield - средняя урожайность
         - deviation_from_standard - отклонение от стандарта
         - last_year_data - все показатели последнего года
+        
+        Args:
+            include_years: список годов для включения (например: [2021, 2022, 2024])
         """
         # Найти заявку для этого сорта
         from trials_app.models import Application
@@ -2915,7 +3403,7 @@ class AnnualDecisionItem(SoftDeleteModel):
         except Application.DoesNotExist:
             # Если нет заявки, попробовать найти напрямую через Trial
             # (для старых сортов из реестра без заявок)
-            self._aggregate_from_trials_directly()
+            self._aggregate_from_trials_directly(include_years)
             return
         except Application.MultipleObjectsReturned:
             # Если несколько заявок, берем последнюю
@@ -2935,15 +3423,29 @@ class AnnualDecisionItem(SoftDeleteModel):
         # Собрать все Trial из distributions
         all_trials = []
         for distribution in distributions:
-            trials = Trial.objects.filter(
+            trials_query = Trial.objects.filter(
                 region=distribution.region,
                 participants__application=application,
                 is_deleted=False,
                 status__in=['completed_008', 'lab_sample_sent', 'lab_completed', 'completed', 'approved', 'continue', 'rejected']
-            ).distinct()
+            )
+            
+            # Фильтрация по годам если указаны
+            if include_years:
+                trials_query = trials_query.filter(year__in=include_years)
+            
+            trials = trials_query.distinct()
             all_trials.extend(trials)
         
         if not all_trials:
+            # Если испытаний нет, установить значения по умолчанию
+            self.yields_by_year = {}
+            self.average_yield = None
+            self.years_tested = 0
+            self.year_started = None
+            self.deviation_from_standard = None
+            self.last_year_data = {}
+            self.save()
             return
         
         # Собрать урожайность по годам (среднее по всем ГСУ области)
@@ -3005,18 +3507,32 @@ class AnnualDecisionItem(SoftDeleteModel):
         
         self.save()
     
-    def _aggregate_from_trials_directly(self):
+    def _aggregate_from_trials_directly(self, include_years=None):
         """
         Запасной вариант: агрегация напрямую из Trial
         (для сортов из реестра без заявок)
         """
-        trials = Trial.objects.filter(
+        trials_query = Trial.objects.filter(
             sort_records=self.sort_record,
             region__oblast=self.annual_table.oblast,
             is_deleted=False
-        ).order_by('year')
+        )
+        
+        # Фильтрация по годам если указаны
+        if include_years:
+            trials_query = trials_query.filter(year__in=include_years)
+            
+        trials = trials_query.order_by('year')
         
         if not trials.exists():
+            # Если испытаний нет, установить значения по умолчанию
+            self.yields_by_year = {}
+            self.average_yield = None
+            self.years_tested = 0
+            self.year_started = None
+            self.deviation_from_standard = None
+            self.last_year_data = {}
+            self.save()
             return
         
         yields_by_year = {}
