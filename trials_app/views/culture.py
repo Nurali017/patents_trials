@@ -226,6 +226,84 @@ class GroupCultureViewSet(viewsets.ModelViewSet):
         if self.action in ['list', 'retrieve']:
             return [permissions.AllowAny()]
         return [permissions.IsAuthenticated()]
+    
+    def perform_create(self, serializer):
+        """
+        При создании группы культур - создаем в Patents Service и сохраняем локально
+        """
+        from django.utils import timezone
+        
+        # Сначала создаем в Patents Service
+        group_data = serializer.validated_data.copy()
+        
+        # Подготавливаем данные для Patents Service
+        patents_data = {
+            'name': group_data.get('name'),
+            'description': group_data.get('description', ''),
+        }
+        
+        # Создаем в Patents Service
+        patents_group = patents_api.create_group_culture(patents_data)
+        
+        if patents_group:
+            # Если успешно создали в Patents Service, сохраняем локально
+            group = serializer.save(
+                group_culture_id=patents_group.get('id'),
+                synced_at=timezone.now()
+            )
+            return group
+        else:
+            # Если не удалось создать в Patents Service, создаем только локально
+            # с временным group_culture_id (будет обновлен при синхронизации)
+            import random
+            temp_id = random.randint(100000, 999999)
+            return serializer.save(
+                group_culture_id=temp_id,
+                synced_at=None
+            )
+    
+    def perform_update(self, serializer):
+        """
+        При обновлении группы культур - обновляем в Patents Service и локально
+        """
+        from django.utils import timezone
+        
+        group = serializer.instance
+        group_data = serializer.validated_data.copy()
+        
+        # Подготавливаем данные для Patents Service
+        patents_data = {
+            'name': group_data.get('name', group.name),
+            'description': group_data.get('description', group.description),
+        }
+        
+        # Обновляем в Patents Service
+        patents_group = patents_api.update_group_culture(
+            group.group_culture_id,
+            patents_data
+        )
+        
+        if patents_group:
+            # Если успешно обновили в Patents Service, сохраняем локально
+            serializer.save(synced_at=timezone.now())
+        else:
+            # Если не удалось обновить в Patents Service, сохраняем только локально
+            serializer.save(synced_at=None)
+    
+    def perform_destroy(self, instance):
+        """
+        При удалении группы культур - удаляем из Patents Service и локально
+        """
+        # Пробуем удалить из Patents Service
+        patents_deleted = patents_api.delete_group_culture(instance.group_culture_id)
+        
+        if patents_deleted:
+            # Если успешно удалили из Patents Service, удаляем локально
+            instance.delete()
+        else:
+            # Если не удалось удалить из Patents Service, помечаем как удаленный локально
+            instance.is_deleted = True
+            instance.save()
 
 
 
@@ -244,6 +322,86 @@ class CultureViewSet(viewsets.ModelViewSet):
         if self.action in ['list', 'retrieve']:
             return [permissions.AllowAny()]
         return [permissions.IsAuthenticated()]
+    
+    def perform_create(self, serializer):
+        """
+        При создании культуры - создаем в Patents Service и сохраняем локально
+        """
+        from django.utils import timezone
+        
+        # Сначала создаем в Patents Service
+        culture_data = serializer.validated_data.copy()
+        
+        # Подготавливаем данные для Patents Service
+        patents_data = {
+            'name': culture_data.get('name'),
+            'description': culture_data.get('description', ''),
+            'group_culture': culture_data.get('group_culture').group_culture_id if culture_data.get('group_culture') else None,
+        }
+        
+        # Создаем в Patents Service
+        patents_culture = patents_api.create_culture(patents_data)
+        
+        if patents_culture:
+            # Если успешно создали в Patents Service, сохраняем локально
+            culture = serializer.save(
+                culture_id=patents_culture.get('id'),
+                synced_at=timezone.now()
+            )
+            return culture
+        else:
+            # Если не удалось создать в Patents Service, создаем только локально
+            # с временным culture_id (будет обновлен при синхронизации)
+            import random
+            temp_id = random.randint(100000, 999999)
+            return serializer.save(
+                culture_id=temp_id,
+                synced_at=None
+            )
+    
+    def perform_update(self, serializer):
+        """
+        При обновлении культуры - обновляем в Patents Service и локально
+        """
+        from django.utils import timezone
+        
+        culture = serializer.instance
+        culture_data = serializer.validated_data.copy()
+        
+        # Подготавливаем данные для Patents Service
+        patents_data = {
+            'name': culture_data.get('name', culture.name),
+            'description': culture_data.get('description', culture.description),
+            'group_culture': culture_data.get('group_culture', culture.group_culture).group_culture_id if culture_data.get('group_culture', culture.group_culture) else None,
+        }
+        
+        # Обновляем в Patents Service
+        patents_culture = patents_api.update_culture(
+            culture.culture_id,
+            patents_data
+        )
+        
+        if patents_culture:
+            # Если успешно обновили в Patents Service, сохраняем локально
+            serializer.save(synced_at=timezone.now())
+        else:
+            # Если не удалось обновить в Patents Service, сохраняем только локально
+            serializer.save(synced_at=None)
+    
+    def perform_destroy(self, instance):
+        """
+        При удалении культуры - удаляем из Patents Service и локально
+        """
+        # Пробуем удалить из Patents Service
+        patents_deleted = patents_api.delete_culture(instance.culture_id)
+        
+        if patents_deleted:
+            # Если успешно удалили из Patents Service, удаляем локально
+            instance.delete()
+        else:
+            # Если не удалось удалить из Patents Service, помечаем как удаленный локально
+            instance.is_deleted = True
+            instance.save()
     
     @action(detail=True, methods=['post'], url_path='sync')
     def sync(self, request, pk=None):

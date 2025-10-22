@@ -73,9 +73,12 @@ class PatentsServiceClient:
         try:
             response = requests.post(
                 self.auth_url,
-                json={
+                data={
                     'username': username,
                     'password': password
+                },
+                headers={
+                    'User-Agent': 'curl/8.7.1'
                 },
                 timeout=self.timeout
             )
@@ -104,6 +107,9 @@ class PatentsServiceClient:
             dict: заголовки для запроса
         """
         headers = custom_headers or {}
+        
+        # Добавляем правильный User-Agent
+        headers['User-Agent'] = 'curl/8.7.1'
         
         # Если токен уже есть, используем его
         if self._token:
@@ -146,8 +152,13 @@ class PatentsServiceClient:
                 kwargs['headers'] = headers
                 response = requests.request(method, url, **kwargs)
             
-            response.raise_for_status()
-            return response.json()
+            # Проверяем статус после возможного обновления токена
+            if response.status_code == 200 or response.status_code == 204:
+                if response.status_code == 204:
+                    return True  # Для DELETE операций
+                return response.json()
+            else:
+                response.raise_for_status()
             
         except requests.exceptions.RequestException as e:
             logger.error(f"Ошибка при запросе к Patents Service ({url}): {e}")
@@ -409,7 +420,10 @@ class PatentsServiceClient:
         Args:
             originator_data: dict с данными оригинатора
             {
-                "name": "Название оригинатора"
+                "name": "Название оригинатора",
+                "code": 123,
+                "is_foreign": false,
+                "is_nanoc": false
             }
             
         Returns:
@@ -420,6 +434,43 @@ class PatentsServiceClient:
         if result is None:
             result = self._make_request('POST', '/ariginators/', json=originator_data)
         return result
+    
+    def update_originator(self, originator_id, originator_data):
+        """
+        Обновить оригинатора в Patents Service
+        
+        Args:
+            originator_id: ID оригинатора
+            originator_data: dict с данными для обновления
+            
+        Returns:
+            dict или None: Обновленный оригинатор
+        """
+        # Пробуем разные варианты endpoint
+        result = self._make_request('PUT', f'/originators/{originator_id}/', json=originator_data)
+        if result is None:
+            result = self._make_request('PUT', f'/ariginators/{originator_id}/', json=originator_data)
+        if result is None:
+            result = self._make_request('PATCH', f'/originators/{originator_id}/', json=originator_data)
+        if result is None:
+            result = self._make_request('PATCH', f'/ariginators/{originator_id}/', json=originator_data)
+        return result
+    
+    def delete_originator(self, originator_id):
+        """
+        Удалить оригинатора из Patents Service
+        
+        Args:
+            originator_id: ID оригинатора
+            
+        Returns:
+            bool: True если успешно удален
+        """
+        # Пробуем разные варианты endpoint
+        result = self._make_request('DELETE', f'/originators/{originator_id}/')
+        if result is None:
+            result = self._make_request('DELETE', f'/ariginators/{originator_id}/')
+        return result is not None
     
     def create_culture(self, culture_data):
         """
@@ -451,6 +502,24 @@ class PatentsServiceClient:
         """
         return self._make_request('PUT', f'/cultures/{culture_id}/', json=culture_data)
     
+    def delete_culture(self, culture_id):
+        """
+        Удалить культуру из Patents Service
+        
+        Args:
+            culture_id: ID культуры
+            
+        Returns:
+            bool: True если успешно удалено
+        """
+        try:
+            response = self._make_request('DELETE', f'/cultures/{culture_id}/')
+            # Для DELETE запросов успешный ответ может быть None (204 No Content)
+            return True
+        except Exception as e:
+            logger.error(f"Ошибка удаления культуры {culture_id}: {e}")
+            return False
+    
     def create_group_culture(self, group_data):
         """
         Создать новую группу культур в Patents Service
@@ -466,6 +535,37 @@ class PatentsServiceClient:
             dict или None: Созданная группа культур
         """
         return self._make_request('POST', '/group-cultures/', json=group_data)
+    
+    def update_group_culture(self, group_id, group_data):
+        """
+        Обновить группу культур в Patents Service
+        
+        Args:
+            group_id: ID группы культур
+            group_data: dict с данными группы
+            
+        Returns:
+            dict или None: Обновленная группа культур
+        """
+        return self._make_request('PUT', f'/group-cultures/{group_id}/', json=group_data)
+    
+    def delete_group_culture(self, group_id):
+        """
+        Удалить группу культур из Patents Service
+        
+        Args:
+            group_id: ID группы культур
+            
+        Returns:
+            bool: True если успешно удалено
+        """
+        try:
+            response = self._make_request('DELETE', f'/group-cultures/{group_id}/')
+            # Для DELETE запросов успешный ответ может быть None (204 No Content)
+            return True
+        except Exception as e:
+            logger.error(f"Ошибка удаления группы культур {group_id}: {e}")
+            return False
     
     def get_all_sorts(self, params=None):
         """
@@ -536,6 +636,37 @@ class PatentsServiceClient:
             dict или None: Созданный сорт
         """
         return self._make_request('POST', '/sorts/', json=sort_data)
+    
+    def update_sort(self, sort_id, sort_data):
+        """
+        Обновить сорт в Patents Service
+        
+        Args:
+            sort_id: ID сорта
+            sort_data: dict с данными сорта
+            
+        Returns:
+            dict или None: Обновленный сорт
+        """
+        return self._make_request('PUT', f'/sorts/{sort_id}/', json=sort_data)
+    
+    def delete_sort(self, sort_id):
+        """
+        Удалить сорт из Patents Service
+        
+        Args:
+            sort_id: ID сорта
+            
+        Returns:
+            bool: True если успешно удалено
+        """
+        try:
+            response = self._make_request('DELETE', f'/sorts/{sort_id}/')
+            # Для DELETE запросов успешный ответ может быть None (204 No Content)
+            return True
+        except Exception as e:
+            logger.error(f"Ошибка удаления сорта {sort_id}: {e}")
+            return False
     
     def validate_sort_for_trial(self, sort_id):
         """

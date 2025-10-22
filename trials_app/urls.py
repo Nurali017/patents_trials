@@ -3,6 +3,9 @@ from rest_framework.routers import DefaultRouter
 from . import views, auth_views
 
 router = DefaultRouter()
+# Роутер для оригинаторов в patents
+patents_router = DefaultRouter()
+patents_router.register(r'ariginators', views.OriginatorViewSet, basename='patent-originator')
 # Справочники Trials
 router.register(r'oblasts', views.OblastViewSet)
 router.register(r'climate-zones', views.ClimateZoneViewSet)
@@ -10,11 +13,12 @@ router.register(r'regions', views.RegionViewSet)
 router.register(r'indicators', views.IndicatorViewSet)
 router.register(r'trial-types', views.TrialTypeViewSet)
 
-# Справочники из Patents - СКРЫТЫ (используйте /patents/... endpoints)
-# router.register(r'group-cultures', views.GroupCultureViewSet)
-# router.register(r'cultures', views.CultureViewSet)
-# router.register(r'originators', views.OriginatorViewSet)
-# router.register(r'sort-records', views.SortRecordViewSet)
+# Справочники из Patents - ИНТЕГРИРОВАНЫ с Patents Service
+router.register(r'group-cultures', views.GroupCultureViewSet)
+router.register(r'cultures', views.CultureViewSet)
+router.register(r'originators', views.OriginatorViewSet)
+router.register(r'sort-records', views.SortRecordViewSet)
+
 
 # Основные сущности
 router.register(r'trial-plans', views.TrialPlanViewSet)
@@ -55,19 +59,15 @@ urlpatterns = [
     path('patents/cultures/<int:culture_id>/', views.get_culture_detail, name='get-culture-detail'),
     path('patents/cultures/<int:culture_id>/update/', views.update_culture, name='update-culture'),
     
-    # Оригинаторы (обязательны для создания сортов!)
-    path('patents/originators/', views.get_originators, name='get-originators'),
-    path('patents/originators/create/', views.create_originator, name='create-originator'),
-    path('patents/originators/<int:originator_id>/', views.get_originator_detail, name='get-originator-detail'),
+    # Оригинаторы API (с новыми полями)
+    path('patents/', include(patents_router.urls)),
+    
     
     # Сорта (справочник)
     path('patents/sorts/', views.get_sorts, name='get-sorts'),
     path('patents/sorts/create/', views.create_sort, name='create-sort'),
     path('patents/sorts/<int:sort_id>/', views.get_sort_detail, name='get-sort-detail'),
     
-    # === API V2 поддержка для фронтенда ===
-    # Прокси для API v2 патентов (для совместимости с фронтендом)
-    path('v2/patents/sorts/', views.create_sort, name='create-sort-v2'),
     
     # Сорта с маппингом культур (для Trials)
     path('sort-records/by-culture/', views.get_sorts_for_trial_culture, name='get-sorts-for-trial-culture'),

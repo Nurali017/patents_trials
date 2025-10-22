@@ -380,6 +380,19 @@ class Originator(SoftDeleteModel):
         max_length=512,
         help_text="Название оригинатора"
     )
+    code = models.IntegerField(
+        null=True,
+        blank=True,
+        help_text="Код оригинатора"
+    )
+    is_foreign = models.BooleanField(
+        default=False,
+        help_text="Иностранный оригинатор"
+    )
+    is_nanoc = models.BooleanField(
+        default=False,
+        help_text="НАНОЦ оригинатор"
+    )
     
     # Метаданные
     synced_at = models.DateTimeField(null=True, blank=True)
@@ -402,6 +415,9 @@ class Originator(SoftDeleteModel):
         originator_data = patents_api.get_originator(self.originator_id)
         if originator_data:
             self.name = originator_data.get('name', self.name)
+            self.code = originator_data.get('code', self.code)
+            self.is_foreign = originator_data.get('is_foreign', self.is_foreign)
+            self.is_nanoc = originator_data.get('is_nanoc', self.is_nanoc)
             self.synced_at = timezone.now()
             self.save()
             return True
