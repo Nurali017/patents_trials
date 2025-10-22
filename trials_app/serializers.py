@@ -167,6 +167,7 @@ class GroupCultureSerializer(serializers.ModelSerializer):
     class Meta:
         model = GroupCulture
         fields = '__all__'
+        read_only_fields = ['group_culture_id', 'synced_at']
 
 class CultureSerializer(serializers.ModelSerializer):
     group_culture_name = serializers.CharField(source='group_culture.name', read_only=True)
@@ -201,9 +202,17 @@ class TrialTypeSerializer(serializers.ModelSerializer):
         fields = '__all__'
 
 class OriginatorSerializer(serializers.ModelSerializer):
+    """Сериализатор для создания и обновления оригинаторов"""
     class Meta:
         model = Originator
-        fields = '__all__'
+        fields = ['id', 'originator_id', 'name', 'code', 'is_foreign', 'is_nanoc', 'synced_at', 'created_at', 'updated_at']
+
+
+class OriginatorRetrieveSerializer(serializers.ModelSerializer):
+    """Сериализатор для получения данных оригинатора"""
+    class Meta:
+        model = Originator
+        fields = ['id', 'originator_id', 'name', 'code', 'is_foreign', 'is_nanoc', 'synced_at', 'created_at', 'updated_at']
 
 class SortOriginatorSerializer(serializers.ModelSerializer):
     """Сериализатор для связи сорта с оригинатором"""
@@ -224,9 +233,50 @@ class SortRecordSerializer(serializers.ModelSerializer):
     # Оригинаторы (список с процентами)
     originators = serializers.SerializerMethodField()
     
+    # Поддержка patents_culture_id
+    patents_culture_id = serializers.IntegerField(
+        required=False,
+        write_only=True,
+        help_text="ID культуры в Patents Service"
+    )
+    
     class Meta:
         model = SortRecord
         fields = '__all__'
+        read_only_fields = ['sort_id', 'synced_at']
+    
+    def validate(self, data):
+        """Валидация: должен быть указан либо culture, либо patents_culture_id"""
+        culture = data.get('culture')
+        patents_culture_id = data.get('patents_culture_id')
+        
+        if not culture and not patents_culture_id:
+            raise serializers.ValidationError(
+                "Необходимо указать либо culture, либо patents_culture_id"
+            )
+        
+        if culture and patents_culture_id:
+            raise serializers.ValidationError(
+                "Укажите только один параметр: culture или patents_culture_id"
+            )
+        
+        # Если передан patents_culture_id, найти соответствующую локальную культуру
+        if patents_culture_id:
+            try:
+                culture_obj = Culture.objects.get(
+                    culture_id=patents_culture_id,
+                    is_deleted=False
+                )
+                # Заменяем patents_culture_id на culture для дальнейшей обработки
+                data['culture'] = culture_obj
+                data.pop('patents_culture_id', None)
+            except Culture.DoesNotExist:
+                raise serializers.ValidationError({
+                    'patents_culture_id': f'Культура с Patents ID {patents_culture_id} не найдена в локальной базе. '
+                                         f'Возможно, нужно синхронизировать культуры.'
+                })
+        
+        return data
     
     def get_originators(self, obj):
         """Получить список оригинаторов сорта"""
