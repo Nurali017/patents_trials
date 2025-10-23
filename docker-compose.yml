@@ -52,9 +52,9 @@ services:
       - SQL_DATABASE=trials_db
       - SQL_USER=admin
       - SQL_PASSWORD=qwe1daSjewspds12
-      - SQL_HOST=trials-db
-      - SQL_PORT=5432
-      - PATENTS_SERVICE_URL=http://patents-backend-web-1:8000
+      - SQL_HOST=2.134.15.120
+      - SQL_PORT=5433
+      - PATENTS_SERVICE_URL=http://patents-web-1:8000
       - PATENTS_SERVICE_USERNAME=admin
       - PATENTS_SERVICE_PASSWORD=Fx!46hu
     depends_on:

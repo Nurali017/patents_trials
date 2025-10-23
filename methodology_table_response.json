@@ -1,0 +1,951 @@
+{
+  "oblast": {
+    "id": 17,
+    "name": "Жетісу"
+  },
+  "year": 2025,
+  "years_range": [
+    2023,
+    2024,
+    2025
+  ],
+  "generated_at": "2025-10-20T05:45:39.464252Z",
+  "regions": [
+    {
+      "id": 46,
+      "name": "Карабулакский ГСУ"
+    },
+    {
+      "id": 50,
+      "name": "Кербулакский ГСУ"
+    },
+    {
+      "id": 47,
+      "name": "Когалинский ГСУ"
+    },
+    {
+      "id": 49,
+      "name": "Панфиловский ГСУ"
+    },
+    {
+      "id": 44,
+      "name": "Плодово-ягодный ГСУ"
+    },
+    {
+      "id": 48,
+      "name": "Саркандский ГСУ"
+    },
+    {
+      "id": 45,
+      "name": "Талдыкорганский п/ягодный ГСУ"
+    }
+  ],
+  "methodology_table": {
+    "Кербулакский ГСУ": {
+      "D03": {
+        "group_code": "D03",
+        "group_name": "Средняя группа (среднеспелая)",
+        "sorts": [
+          {
+            "sort_name": "Табыс 60",
+            "application_number": "2",
+            "is_standard": true,
+            "is_comparison_standard": true,
+            "yields_by_year": {
+              "2023": 2.3,
+              "2024": 6.6
+            },
+            "average_yield": 4.4,
+            "deviation_percent": "",
+            "years_tested": 2,
+            "year_started": 2023,
+            "main_indicators": {},
+            "quality_indicators": {},
+            "decision_status": "decision_pending",
+            "latest_decision": null
+          },
+          {
+            "sort_name": "Арай",
+            "application_number": "3",
+            "is_standard": true,
+            "is_comparison_standard": false,
+            "yields_by_year": {
+              "2023": 2.6,
+              "2024": 7.1
+            },
+            "average_yield": 4.8,
+            "deviation_percent": "",
+            "years_tested": 2,
+            "year_started": 2023,
+            "main_indicators": {},
+            "quality_indicators": {},
+            "decision_status": "decision_pending",
+            "latest_decision": null
+          }
+        ]
+      },
+      "D07": {
+        "group_code": "D07",
+        "group_name": "Среднеранняя",
+        "sorts": [
+          {
+            "sort_name": "Казахстанская 4",
+            "application_number": "1",
+            "is_standard": false,
+            "is_comparison_standard": false,
+            "yields_by_year": {
+              "2023": 2.3,
+              "2024": 3.2
+            },
+            "average_yield": 2.8,
+            "deviation_percent": null,
+            "years_tested": 2,
+            "year_started": 2023,
+            "main_indicators": {},
+            "quality_indicators": {},
+            "decision_status": "decision_pending",
+            "latest_decision": null
+          }
+        ]
+      }
+    },
+    "Когалинский ГСУ": {
+      "D07": {
+        "group_code": "D07",
+        "group_name": "Среднеранняя",
+        "sorts": [
+          {
+            "sort_name": "Казахстанская 4",
+            "application_number": "1",
+            "is_standard": false,
+            "is_comparison_standard": false,
+            "yields_by_year": {
+              "2023": 8.0,
+              "2024": 22.0
+            },
+            "average_yield": 15.0,
+            "deviation_percent": null,
+            "years_tested": 2,
+            "year_started": 2023,
+            "main_indicators": {},
+            "quality_indicators": {},
+            "decision_status": "decision_pending",
+            "latest_decision": null
+          }
+        ]
+      },
+      "D03": {
+        "group_code": "D03",
+        "group_name": "Средняя группа (среднеспелая)",
+        "sorts": [
+          {
+            "sort_name": "Патриция",
+            "application_number": "5",
+            "is_standard": false,
+            "is_comparison_standard": false,
+            "yields_by_year": {
+              "2025": 9.2
+            },
+            "average_yield": 9.2,
+            "deviation_percent": 12.2,
+            "years_tested": 1,
+            "year_started": 2025,
+            "main_indicators": {
+              "plant_height": {
+                "value": 51.0,
+                "unit": "см",
+                "name": "Высота растений",
+                "description": "Высота растения или стеблестоя"
+              },
+              "vegetation_period": {
+                "value": 80.0,
+                "unit": "дней",
+                "name": "Вегетационный период",
+                "description": "Период от посева/всходов до созревания"
+              },
+              "thousand_seed_weight": {
+                "value": 24.4,
+                "unit": "г",
+                "name": "Масса 1000 зёрен/семян",
+                "description": "Масса 1000 семян или зёрен"
+              },
+              "shedding_resistance": {
+                "value": 5.0,
+                "unit": "балл (1-9)",
+                "name": "Устойчивость к осыпанию",
+                "description": "Устойчивость к осыпанию"
+              },
+              "emergence_completeness": {
+                "value": 77.0,
+                "unit": "%",
+                "name": "Полнота всходов",
+                "description": "Полнота всходов, определяется после полных всходов"
+              },
+              "lodging_resistance": {
+                "value": 5.0,
+                "unit": "балл (1-9)",
+                "name": "Устойчивость к полеганию",
+                "description": "Устойчивость к полеганию стеблей"
+              },
+              "drought_resistance": {
+                "value": 4.0,
+                "unit": "балл (1-9)",
+                "name": "Устойчивость к засухе",
+                "description": "Устойчивость к засушливым условиям"
+              },
+              "germination_resistance": {
+                "value": 5.0,
+                "unit": "балл (1-9)",
+                "name": "Устойчивость к прорастанию на корню",
+                "description": "Устойчивость зерна к прорастанию до уборки"
+              },
+              "tillering": {
+                "value": 1.1,
+                "unit": "шт. продуктивных стеблей",
+                "name": "Продуктивная кустистость",
+                "description": "Количество продуктивных стеблей на растении"
+              },
+              "grain_output": {
+                "value": 29.0,
+                "unit": "%",
+                "name": "Выход зерна",
+                "description": "Процент зерна от массы початка (кукуруза)"
+              }
+            },
+            "quality_indicators": {},
+            "decision_status": "decision_pending",
+            "latest_decision": null
+          },
+          {
+            "sort_name": "Элайя",
+            "application_number": "4",
+            "is_standard": false,
+            "is_comparison_standard": false,
+            "yields_by_year": {
+              "2025": 10.3
+            },
+            "average_yield": 10.3,
+            "deviation_percent": 25.6,
+            "years_tested": 1,
+            "year_started": 2025,
+            "main_indicators": {
+              "vegetation_period": {
+                "value": 81.0,
+                "unit": "дней",
+                "name": "Вегетационный период",
+                "description": "Период от посева/всходов до созревания"
+              },
+              "thousand_seed_weight": {
+                "value": 24.3,
+                "unit": "г",
+                "name": "Масса 1000 зёрен/семян",
+                "description": "Масса 1000 семян или зёрен"
+              },
+              "emergence_completeness": {
+                "value": 79.0,
+                "unit": "%",
+                "name": "Полнота всходов",
+                "description": "Полнота всходов, определяется после полных всходов"
+              },
+              "lodging_resistance": {
+                "value": 5.0,
+                "unit": "балл (1-9)",
+                "name": "Устойчивость к полеганию",
+                "description": "Устойчивость к полеганию стеблей"
+              },
+              "drought_resistance": {
+                "value": 4.0,
+                "unit": "балл (1-9)",
+                "name": "Устойчивость к засухе",
+                "description": "Устойчивость к засушливым условиям"
+              },
+              "germination_resistance": {
+                "value": 5.0,
+                "unit": "балл (1-9)",
+                "name": "Устойчивость к прорастанию на корню",
+                "description": "Устойчивость зерна к прорастанию до уборки"
+              },
+              "tillering": {
+                "value": 1.1,
+                "unit": "шт. продуктивных стеблей",
+                "name": "Продуктивная кустистость",
+                "description": "Количество продуктивных стеблей на растении"
+              },
+              "grain_output": {
+                "value": 32.0,
+                "unit": "%",
+                "name": "Выход зерна",
+                "description": "Процент зерна от массы початка (кукуруза)"
+              },
+              "shedding_resistance": {
+                "value": 5.0,
+                "unit": "балл (1-9)",
+                "name": "Устойчивость к осыпанию",
+                "description": "Устойчивость к осыпанию"
+              },
+              "plant_height": {
+                "value": 41.0,
+                "unit": "см",
+                "name": "Высота растений",
+                "description": "Высота растения или стеблестоя"
+              }
+            },
+            "quality_indicators": {},
+            "decision_status": "decision_pending",
+            "latest_decision": null
+          },
+          {
+            "sort_name": "Арай",
+            "application_number": "3",
+            "is_standard": true,
+            "is_comparison_standard": false,
+            "yields_by_year": {
+              "2023": 9.0,
+              "2024": 23.5,
+              "2025": 7.2
+            },
+            "average_yield": 13.2,
+            "deviation_percent": "",
+            "years_tested": 3,
+            "year_started": 2023,
+            "main_indicators": {
+              "vegetation_period": {
+                "value": 80.0,
+                "unit": "дней",
+                "name": "Вегетационный период",
+                "description": "Период от посева/всходов до созревания"
+              },
+              "thousand_seed_weight": {
+                "value": 25.2,
+                "unit": "г",
+                "name": "Масса 1000 зёрен/семян",
+                "description": "Масса 1000 семян или зёрен"
+              },
+              "shedding_resistance": {
+                "value": 5.0,
+                "unit": "балл (1-9)",
+                "name": "Устойчивость к осыпанию",
+                "description": "Устойчивость к осыпанию"
+              },
+              "plant_height": {
+                "value": 48.0,
+                "unit": "см",
+                "name": "Высота растений",
+                "description": "Высота растения или стеблестоя"
+              },
+              "emergence_completeness": {
+                "value": 74.0,
+                "unit": "%",
+                "name": "Полнота всходов",
+                "description": "Полнота всходов, определяется после полных всходов"
+              },
+              "lodging_resistance": {
+                "value": 5.0,
+                "unit": "балл (1-9)",
+                "name": "Устойчивость к полеганию",
+                "description": "Устойчивость к полеганию стеблей"
+              },
+              "drought_resistance": {
+                "value": 3.0,
+                "unit": "балл (1-9)",
+                "name": "Устойчивость к засухе",
+                "description": "Устойчивость к засушливым условиям"
+              },
+              "germination_resistance": {
+                "value": 5.0,
+                "unit": "балл (1-9)",
+                "name": "Устойчивость к прорастанию на корню",
+                "description": "Устойчивость зерна к прорастанию до уборки"
+              },
+              "tillering": {
+                "value": 1.1,
+                "unit": "шт. продуктивных стеблей",
+                "name": "Продуктивная кустистость",
+                "description": "Количество продуктивных стеблей на растении"
+              },
+              "grain_output": {
+                "value": 29.0,
+                "unit": "%",
+                "name": "Выход зерна",
+                "description": "Процент зерна от массы початка (кукуруза)"
+              }
+            },
+            "quality_indicators": {},
+            "decision_status": "decision_pending",
+            "latest_decision": null
+          },
+          {
+            "sort_name": "Табыс 60",
+            "application_number": "2",
+            "is_standard": true,
+            "is_comparison_standard": true,
+            "yields_by_year": {
+              "2023": 10.4,
+              "2024": 24.4,
+              "2025": 8.2
+            },
+            "average_yield": 14.3,
+            "deviation_percent": "",
+            "years_tested": 3,
+            "year_started": 2023,
+            "main_indicators": {
+              "vegetation_period": {
+                "value": 78.0,
+                "unit": "дней",
+                "name": "Вегетационный период",
+                "description": "Период от посева/всходов до созревания"
+              },
+              "thousand_seed_weight": {
+                "value": 24.8,
+                "unit": "г",
+                "name": "Масса 1000 зёрен/семян",
+                "description": "Масса 1000 семян или зёрен"
+              },
+              "shedding_resistance": {
+                "value": 5.0,
+                "unit": "балл (1-9)",
+                "name": "Устойчивость к осыпанию",
+                "description": "Устойчивость к осыпанию"
+              },
+              "plant_height": {
+                "value": 42.0,
+                "unit": "см",
+                "name": "Высота растений",
+                "description": "Высота растения или стеблестоя"
+              },
+              "emergence_completeness": {
+                "value": 76.0,
+                "unit": "%",
+                "name": "Полнота всходов",
+                "description": "Полнота всходов, определяется после полных всходов"
+              },
+              "lodging_resistance": {
+                "value": 5.0,
+                "unit": "балл (1-9)",
+                "name": "Устойчивость к полеганию",
+                "description": "Устойчивость к полеганию стеблей"
+              },
+              "drought_resistance": {
+                "value": 4.0,
+                "unit": "балл (1-9)",
+                "name": "Устойчивость к засухе",
+                "description": "Устойчивость к засушливым условиям"
+              },
+              "germination_resistance": {
+                "value": 5.0,
+                "unit": "балл (1-9)",
+                "name": "Устойчивость к прорастанию на корню",
+                "description": "Устойчивость зерна к прорастанию до уборки"
+              },
+              "tillering": {
+                "value": 1.1,
+                "unit": "шт. продуктивных стеблей",
+                "name": "Продуктивная кустистость",
+                "description": "Количество продуктивных стеблей на растении"
+              },
+              "grain_output": {
+                "value": 34.0,
+                "unit": "%",
+                "name": "Выход зерна",
+                "description": "Процент зерна от массы початка (кукуруза)"
+              }
+            },
+            "quality_indicators": {},
+            "decision_status": "decision_pending",
+            "latest_decision": null
+          }
+        ]
+      }
+    },
+    "Саркандский ГСУ": {
+      "D07": {
+        "group_code": "D07",
+        "group_name": "Среднеранняя",
+        "sorts": [
+          {
+            "sort_name": "Казахстанская 4",
+            "application_number": "1",
+            "is_standard": false,
+            "is_comparison_standard": false,
+            "yields_by_year": {
+              "2023": 9.8,
+              "2024": 16.0
+            },
+            "average_yield": 12.9,
+            "deviation_percent": null,
+            "years_tested": 2,
+            "year_started": 2023,
+            "main_indicators": {},
+            "quality_indicators": {},
+            "decision_status": "decision_pending",
+            "latest_decision": null
+          }
+        ]
+      },
+      "D03": {
+        "group_code": "D03",
+        "group_name": "Средняя группа (среднеспелая)",
+        "sorts": [
+          {
+            "sort_name": "Патриция",
+            "application_number": "5",
+            "is_standard": false,
+            "is_comparison_standard": false,
+            "yields_by_year": {
+              "2025": 17.5
+            },
+            "average_yield": 17.5,
+            "deviation_percent": 12.2,
+            "years_tested": 1,
+            "year_started": 2025,
+            "main_indicators": {
+              "plant_height": {
+                "value": 57.0,
+                "unit": "см",
+                "name": "Высота растений",
+                "description": "Высота растения или стеблестоя"
+              },
+              "lodging_resistance": {
+                "value": 5.0,
+                "unit": "балл (1-9)",
+                "name": "Устойчивость к полеганию",
+                "description": "Устойчивость к полеганию стеблей"
+              },
+              "thousand_seed_weight": {
+                "value": 24.3,
+                "unit": "г",
+                "name": "Масса 1000 зёрен/семян",
+                "description": "Масса 1000 семян или зёрен"
+              },
+              "germination_resistance": {
+                "value": 5.0,
+                "unit": "балл (1-9)",
+                "name": "Устойчивость к прорастанию на корню",
+                "description": "Устойчивость зерна к прорастанию до уборки"
+              },
+              "grain_output": {
+                "value": 36.0,
+                "unit": "%",
+                "name": "Выход зерна",
+                "description": "Процент зерна от массы початка (кукуруза)"
+              },
+              "emergence_completeness": {
+                "value": 98.0,
+                "unit": "%",
+                "name": "Полнота всходов",
+                "description": "Полнота всходов, определяется после полных всходов"
+              },
+              "drought_resistance": {
+                "value": 4.0,
+                "unit": "балл (1-9)",
+                "name": "Устойчивость к засухе",
+                "description": "Устойчивость к засушливым условиям"
+              },
+              "vegetation_period": {
+                "value": 73.0,
+                "unit": "дней",
+                "name": "Вегетационный период",
+                "description": "Период от посева/всходов до созревания"
+              },
+              "shedding_resistance": {
+                "value": 5.0,
+                "unit": "балл (1-9)",
+                "name": "Устойчивость к осыпанию",
+                "description": "Устойчивость к осыпанию"
+              },
+              "tillering": {
+                "value": 1.4,
+                "unit": "шт. продуктивных стеблей",
+                "name": "Продуктивная кустистость",
+                "description": "Количество продуктивных стеблей на растении"
+              }
+            },
+            "quality_indicators": {},
+            "decision_status": "decision_pending",
+            "latest_decision": null
+          },
+          {
+            "sort_name": "Элайя",
+            "application_number": "4",
+            "is_standard": false,
+            "is_comparison_standard": false,
+            "yields_by_year": {
+              "2025": 18.5
+            },
+            "average_yield": 18.5,
+            "deviation_percent": 18.6,
+            "years_tested": 1,
+            "year_started": 2025,
+            "main_indicators": {
+              "plant_height": {
+                "value": 46.0,
+                "unit": "см",
+                "name": "Высота растений",
+                "description": "Высота растения или стеблестоя"
+              },
+              "lodging_resistance": {
+                "value": 5.0,
+                "unit": "балл (1-9)",
+                "name": "Устойчивость к полеганию",
+                "description": "Устойчивость к полеганию стеблей"
+              },
+              "drought_resistance": {
+                "value": 4.0,
+                "unit": "балл (1-9)",
+                "name": "Устойчивость к засухе",
+                "description": "Устойчивость к засушливым условиям"
+              },
+              "thousand_seed_weight": {
+                "value": 26.7,
+                "unit": "г",
+                "name": "Масса 1000 зёрен/семян",
+                "description": "Масса 1000 семян или зёрен"
+              },
+              "vegetation_period": {
+                "value": 77.0,
+                "unit": "дней",
+                "name": "Вегетационный период",
+                "description": "Период от посева/всходов до созревания"
+              },
+              "shedding_resistance": {
+                "value": 5.0,
+                "unit": "балл (1-9)",
+                "name": "Устойчивость к осыпанию",
+                "description": "Устойчивость к осыпанию"
+              },
+              "tillering": {
+                "value": 1.5,
+                "unit": "шт. продуктивных стеблей",
+                "name": "Продуктивная кустистость",
+                "description": "Количество продуктивных стеблей на растении"
+              },
+              "germination_resistance": {
+                "value": 5.0,
+                "unit": "балл (1-9)",
+                "name": "Устойчивость к прорастанию на корню",
+                "description": "Устойчивость зерна к прорастанию до уборки"
+              },
+              "grain_output": {
+                "value": 39.0,
+                "unit": "%",
+                "name": "Выход зерна",
+                "description": "Процент зерна от массы початка (кукуруза)"
+              },
+              "emergence_completeness": {
+                "value": 100.0,
+                "unit": "%",
+                "name": "Полнота всходов",
+                "description": "Полнота всходов, определяется после полных всходов"
+              }
+            },
+            "quality_indicators": {},
+            "decision_status": "decision_pending",
+            "latest_decision": null
+          },
+          {
+            "sort_name": "Арай",
+            "application_number": "3",
+            "is_standard": true,
+            "is_comparison_standard": false,
+            "yields_by_year": {
+              "2023": 11.1,
+              "2024": 17.8,
+              "2025": 14.6
+            },
+            "average_yield": 14.5,
+            "deviation_percent": "",
+            "years_tested": 3,
+            "year_started": 2023,
+            "main_indicators": {
+              "thousand_seed_weight": {
+                "value": 27.1,
+                "unit": "г",
+                "name": "Масса 1000 зёрен/семян",
+                "description": "Масса 1000 семян или зёрен"
+              },
+              "plant_height": {
+                "value": 60.0,
+                "unit": "см",
+                "name": "Высота растений",
+                "description": "Высота растения или стеблестоя"
+              },
+              "grain_output": {
+                "value": 28.0,
+                "unit": "%",
+                "name": "Выход зерна",
+                "description": "Процент зерна от массы початка (кукуруза)"
+              },
+              "emergence_completeness": {
+                "value": 99.0,
+                "unit": "%",
+                "name": "Полнота всходов",
+                "description": "Полнота всходов, определяется после полных всходов"
+              },
+              "lodging_resistance": {
+                "value": 5.0,
+                "unit": "балл (1-9)",
+                "name": "Устойчивость к полеганию",
+                "description": "Устойчивость к полеганию стеблей"
+              },
+              "drought_resistance": {
+                "value": 3.0,
+                "unit": "балл (1-9)",
+                "name": "Устойчивость к засухе",
+                "description": "Устойчивость к засушливым условиям"
+              },
+              "vegetation_period": {
+                "value": 77.0,
+                "unit": "дней",
+                "name": "Вегетационный период",
+                "description": "Период от посева/всходов до созревания"
+              },
+              "shedding_resistance": {
+                "value": 5.0,
+                "unit": "балл (1-9)",
+                "name": "Устойчивость к осыпанию",
+                "description": "Устойчивость к осыпанию"
+              },
+              "tillering": {
+                "value": 1.3,
+                "unit": "шт. продуктивных стеблей",
+                "name": "Продуктивная кустистость",
+                "description": "Количество продуктивных стеблей на растении"
+              },
+              "germination_resistance": {
+                "value": 5.0,
+                "unit": "балл (1-9)",
+                "name": "Устойчивость к прорастанию на корню",
+                "description": "Устойчивость зерна к прорастанию до уборки"
+              }
+            },
+            "quality_indicators": {},
+            "decision_status": "decision_pending",
+            "latest_decision": null
+          },
+          {
+            "sort_name": "Табыс 60",
+            "application_number": "2",
+            "is_standard": true,
+            "is_comparison_standard": true,
+            "yields_by_year": {
+              "2023": 14.3,
+              "2024": 14.6,
+              "2025": 15.6
+            },
+            "average_yield": 14.8,
+            "deviation_percent": "",
+            "years_tested": 3,
+            "year_started": 2023,
+            "main_indicators": {
+              "thousand_seed_weight": {
+                "value": 28.7,
+                "unit": "г",
+                "name": "Масса 1000 зёрен/семян",
+                "description": "Масса 1000 семян или зёрен"
+              },
+              "plant_height": {
+                "value": 52.0,
+                "unit": "см",
+                "name": "Высота растений",
+                "description": "Высота растения или стеблестоя"
+              },
+              "lodging_resistance": {
+                "value": 5.0,
+                "unit": "балл (1-9)",
+                "name": "Устойчивость к полеганию",
+                "description": "Устойчивость к полеганию стеблей"
+              },
+              "drought_resistance": {
+                "value": 4.0,
+                "unit": "балл (1-9)",
+                "name": "Устойчивость к засухе",
+                "description": "Устойчивость к засушливым условиям"
+              },
+              "vegetation_period": {
+                "value": 76.0,
+                "unit": "дней",
+                "name": "Вегетационный период",
+                "description": "Период от посева/всходов до созревания"
+              },
+              "shedding_resistance": {
+                "value": 5.0,
+                "unit": "балл (1-9)",
+                "name": "Устойчивость к осыпанию",
+                "description": "Устойчивость к осыпанию"
+              },
+              "tillering": {
+                "value": 1.4,
+                "unit": "шт. продуктивных стеблей",
+                "name": "Продуктивная кустистость",
+                "description": "Количество продуктивных стеблей на растении"
+              },
+              "germination_resistance": {
+                "value": 5.0,
+                "unit": "балл (1-9)",
+                "name": "Устойчивость к прорастанию на корню",
+                "description": "Устойчивость зерна к прорастанию до уборки"
+              },
+              "grain_output": {
+                "value": 33.0,
+                "unit": "%",
+                "name": "Выход зерна",
+                "description": "Процент зерна от массы початка (кукуруза)"
+              },
+              "emergence_completeness": {
+                "value": 98.0,
+                "unit": "%",
+                "name": "Полнота всходов",
+                "description": "Полнота всходов, определяется после полных всходов"
+              }
+            },
+            "quality_indicators": {},
+            "decision_status": "decision_pending",
+            "latest_decision": null
+          }
+        ]
+      }
+    }
+  },
+  "standards_by_group": {
+    "D03": [
+      {
+        "sort_name": "Арай",
+        "average_yield": 7.2,
+        "is_comparison_standard": false,
+        "region": "Все регионы"
+      },
+      {
+        "sort_name": "Табыс 60",
+        "average_yield": 8.2,
+        "is_comparison_standard": true,
+        "region": "Все регионы"
+      },
+      {
+        "sort_name": "Арай",
+        "average_yield": 14.6,
+        "is_comparison_standard": false,
+        "region": "Все регионы"
+      },
+      {
+        "sort_name": "Табыс 60",
+        "average_yield": 15.6,
+        "is_comparison_standard": true,
+        "region": "Все регионы"
+      }
+    ]
+  },
+  "quality_indicators": {
+    "protein_content": {
+      "name": "Содержание белка/протеина",
+      "unit": "%",
+      "description": "Лабораторный анализ содержания белка"
+    },
+    "dry_matter_content": {
+      "name": "Содержание сухого вещества",
+      "unit": "%",
+      "description": "Процент сухого вещества в общей массе"
+    },
+    "vitamin_c_content": {
+      "name": "Содержание витамина С",
+      "unit": "мг/%",
+      "description": "Лабораторный анализ витамина С"
+    },
+    "gluten_content": {
+      "name": "Содержание клейковины",
+      "unit": "%",
+      "description": "Содержание клейковины (для пшеницы)"
+    },
+    "vitreousness": {
+      "name": "Стекловидность",
+      "unit": "%",
+      "description": "Стекловидность зерна"
+    },
+    "bread_volume": {
+      "name": "Объём хлеба",
+      "unit": "мл",
+      "description": "Объём хлеба из муки (хлебопекарное качество)"
+    },
+    "baking_score": {
+      "name": "Общая хлебопекарная оценка",
+      "unit": "балл (1-5)",
+      "description": "Комплексная хлебопекарная оценка"
+    },
+    "fiber_content": {
+      "name": "Содержание клетчатки",
+      "unit": "%",
+      "description": "Содержание сырой клетчатки"
+    },
+    "fat_content": {
+      "name": "Содержание жира",
+      "unit": "%",
+      "description": "Содержание сырого жира"
+    },
+    "starch_content": {
+      "name": "Содержание крахмала",
+      "unit": "%",
+      "description": "Содержание крахмала (для силосных)"
+    },
+    "oil_content": {
+      "name": "Содержание масла",
+      "unit": "%",
+      "description": "Масличность семян"
+    },
+    "starch_content_tubers": {
+      "name": "Содержание крахмала (картофель)",
+      "unit": "%",
+      "description": "Содержание крахмала в клубнях"
+    },
+    "storability": {
+      "name": "Лёжкость при хранении",
+      "unit": "%",
+      "description": "Процент сохранившейся продукции после хранения"
+    },
+    "carotenoids_content": {
+      "name": "Содержание каротиноидов (морковь)",
+      "unit": "%",
+      "description": "Содержание каротиноидов (провитамин А)"
+    },
+    "sugar_content_beet": {
+      "name": "Содержание сахара (свёкла)",
+      "unit": "%",
+      "description": "Содержание сахара в столовой свёкле"
+    },
+    "juice_dry_matter": {
+      "name": "Содержание сухого вещества в соке (томат)",
+      "unit": "%",
+      "description": "Сухое вещество в соке томата"
+    },
+    "sugar_content_grapes": {
+      "name": "Сахаристость (виноград)",
+      "unit": "%",
+      "description": "Содержание сахара в ягодах винограда"
+    }
+  },
+  "warnings": [
+    {
+      "type": "multiple_standards",
+      "severity": "warning",
+      "group_code": "D03",
+      "group_name": "Средняя группа (среднеспелая)",
+      "message": "В группе D03 найдено 2 стандарта: Арай, Табыс 60. Выбран лучший (с максимальной урожайностью): Табыс 60.",
+      "standards": [
+        "Арай",
+        "Табыс 60"
+      ],
+      "selected_standard": "Табыс 60"
+    },
+    {
+      "type": "multiple_standards",
+      "severity": "warning",
+      "group_code": "D03",
+      "group_name": "Средняя группа (среднеспелая)",
+      "message": "В группе D03 найдено 2 стандарта: Арай, Табыс 60. Выбран лучший (с максимальной урожайностью): Табыс 60.",
+      "standards": [
+        "Арай",
+        "Табыс 60"
+      ],
+      "selected_standard": "Табыс 60"
+    }
+  ],
+  "has_warnings": true
+}
