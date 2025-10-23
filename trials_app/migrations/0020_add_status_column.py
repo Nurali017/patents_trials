@@ -3,6 +3,24 @@
 from django.db import migrations, models
 
 
+def add_fields_if_not_exist(apps, schema_editor):
+    """Add fields only if they don't already exist"""
+    from django.db import connection
+    
+    with connection.cursor() as cursor:
+        # Check if status column exists
+        cursor.execute("""
+            SELECT column_name 
+            FROM information_schema.columns 
+            WHERE table_name='trials_app_applicationoblaststatus' 
+            AND column_name='status'
+        """)
+        
+        # If status column doesn't exist, the table wasn't created by migration 0019
+        # In that case, we shouldn't be here - migration 0019 should have created all fields
+        # This migration is essentially a no-op since migration 0019 creates all these fields
+
+
 class Migration(migrations.Migration):
 
     dependencies = [
@@ -10,71 +28,8 @@ class Migration(migrations.Migration):
     ]
 
     operations = [
-        migrations.AddField(
-            model_name='applicationoblaststatus',
-            name='status',
-            field=models.CharField(
-                choices=[
-                    ('planned', 'Запланировано'),
-                    ('trial_plan_created', 'План создан'),
-                    ('trial_created', 'Испытание создано'),
-                    ('trial_in_progress', 'Испытание идет'),
-                    ('trial_completed', 'Испытание завершено'),
-                    ('decision_pending', 'Ожидает решения'),
-                    ('decision_made', 'Решение принято'),
-                    ('approved', 'Одобрено'),
-                    ('rejected', 'Отклонено'),
-                    ('continue', 'Продолжить'),
-                ],
-                default='planned',
-                help_text='Статус заявки для конкретной области',
-                max_length=20
-            ),
-        ),
-        migrations.AddField(
-            model_name='applicationoblaststatus',
-            name='trial_plan',
-            field=models.ForeignKey(
-                blank=True,
-                help_text='Связанный план испытаний',
-                null=True,
-                on_delete=models.SET_NULL,
-                related_name='application_oblast_statuses',
-                to='trials_app.trialplan'
-            ),
-        ),
-        migrations.AddField(
-            model_name='applicationoblaststatus',
-            name='trial',
-            field=models.ForeignKey(
-                blank=True,
-                help_text='Связанное испытание',
-                null=True,
-                on_delete=models.SET_NULL,
-                related_name='application_oblast_statuses',
-                to='trials_app.trial'
-            ),
-        ),
-        migrations.AddField(
-            model_name='applicationoblaststatus',
-            name='annual_decision_item',
-            field=models.ForeignKey(
-                blank=True,
-                help_text='Связанное решение в годовой таблице',
-                null=True,
-                on_delete=models.SET_NULL,
-                related_name='application_oblast_statuses',
-                to='trials_app.annualdecisionitem'
-            ),
-        ),
-        migrations.AddField(
-            model_name='applicationoblaststatus',
-            name='created_at',
-            field=models.DateTimeField(auto_now_add=True, null=True),
-        ),
-        migrations.AddField(
-            model_name='applicationoblaststatus',
-            name='updated_at',
-            field=models.DateTimeField(auto_now=True, null=True),
-        ),
+        # All fields (status, trial_plan, trial, annual_decision_item, created_at, updated_at)
+        # are already created in migration 0019 when the ApplicationOblastStatus model is created.
+        # This migration was generated in error and should not add duplicate fields.
+        migrations.RunPython(add_fields_if_not_exist, migrations.RunPython.noop),
     ]
