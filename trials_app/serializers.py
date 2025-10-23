@@ -393,13 +393,6 @@ class ApplicationSerializer(serializers.ModelSerializer):
         """Получить сводку по статусам областей"""
         return obj.get_oblast_status_summary()
     
-    def validate_applicant_inn_bin(self, value):
-        """Валидация ИНН/БИН (должен состоять из 12 цифр)"""
-        if value and not value.isdigit():
-            raise serializers.ValidationError("ИНН/БИН должен содержать только цифры")
-        if value and len(value) != 12:
-            raise serializers.ValidationError("ИНН/БИН должен содержать ровно 12 цифр")
-        return value
     
     def validate(self, data):
         """Проверка что указан либо sort_id, либо sort_record"""
