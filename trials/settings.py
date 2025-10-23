@@ -7,6 +7,11 @@ SECRET_KEY = os.environ.get('SECRET_KEY', 'trials-secret-key-change-in-productio
 DEBUG = os.environ.get('DEBUG', 'False').lower() == 'true'
 ALLOWED_HOSTS = ['*']
 
+# Настройки для работы за HTTPS прокси
+SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
+SECURE_SSL_REDIRECT = False  # Не перенаправлять, так как nginx уже обрабатывает HTTPS
+USE_TLS = True
+
 INSTALLED_APPS = [
     'django.contrib.admin',
     'django.contrib.auth',
