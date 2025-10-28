@@ -2,7 +2,10 @@ from django.contrib import admin
 from .models import (
     Oblast, Region, ClimateZone, Indicator, GroupCulture, Culture, Originator, SortOriginator, SortRecord, 
     Application, ApplicationDecisionHistory, PlannedDistribution, TrialType, Trial, TrialParticipant, TrialResult, 
-    TrialLaboratoryResult, Document
+    TrialLaboratoryResult, Document,
+    # Модели реестра
+    RegisterCategory, RegisterUsage, RegisterPeriod, RegisterPlantType, RegisterGrowingCondition,
+    RegisterForm, RegisterPestResistance, RegisterDiseaseResistance, SortRegisterData
 )
 
 @admin.register(Oblast)

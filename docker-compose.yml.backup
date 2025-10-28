@@ -1,24 +1,22 @@
 services:
-  # База данных PostgreSQL (отключена для продакшна - используется внешняя БД)
-  # trials-db:
-  #   image: postgres:14-alpine
-  #   container_name: trials_postgres
-  #   restart: always
-  #   ports:
-  #     - "5432:5432"  # Стандартный порт для dev
-  #   environment:
-  #     - POSTGRES_USER=admin
-  #     - POSTGRES_PASSWORD=qwe1daSjewspds12
-  #     - POSTGRES_DB=trials_db
-  #   volumes:
-  #     - trials_postgres_data:/var/lib/postgresql/data
-  #   networks:
-  #     - default
-  #   healthcheck:
-  #     test: ["CMD-SHELL", "pg_isready -U admin -d trials_db"]
-  #     interval: 10s
-  #     timeout: 5s
-  #     retries: 5
+  # База данных PostgreSQL
+  trials-db:
+    image: postgres:14-alpine
+    container_name: trials_postgres
+    restart: always
+    ports:
+      - "5433:5432"  # Используем 5433 чтобы не конфликтовать с основной БД
+    environment:
+      - POSTGRES_USER=admin
+      - POSTGRES_PASSWORD=qwe1daSjewspds12
+      - POSTGRES_DB=trials_db
+    volumes:
+      - trials_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U admin -d trials_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
   # Микросервис Trials
   trials_service:
@@ -46,18 +44,22 @@ services:
       - default
       - patents-backend_default  # Подключение к сети Patents Service
     environment:
-      - DEBUG=0
-      - MODE=prod
-      - HOST_NAME=2.134.15.120
+      - DEBUG=1
+      - MODE=dev
+      - HOST_NAME=localhost
+      - SECRET_KEY=trials-secret-key-change-in-production
+      - SQL_ENGINE=django.db.backends.postgresql
       - SQL_DATABASE=trials_db
       - SQL_USER=admin
       - SQL_PASSWORD=qwe1daSjewspds12
-      - SQL_HOST=2.134.15.120
-      - SQL_PORT=5433
-      - PATENTS_SERVICE_URL=https://dusbase.kz:443
+      - SQL_HOST=trials-db
+      - SQL_PORT=5432
+      - PATENTS_SERVICE_URL=http://patents-web-1:8000
       - PATENTS_SERVICE_USERNAME=admin
       - PATENTS_SERVICE_PASSWORD=Fx!46hu
-    # depends_on: # Убрано - используем внешнюю БД
+    depends_on:
+      trials-db:
+        condition: service_healthy
 
 networks:
   patents-backend_default:

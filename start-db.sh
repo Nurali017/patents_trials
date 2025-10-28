@@ -11,12 +11,12 @@ if docker ps | grep -q trials_postgres; then
     echo ""
     echo "📊 Информация о подключении:"
     echo "   Host: localhost"
-    echo "   Port: 5433"
+    echo "   Port: 5432"
     echo "   Database: trials_db"
     echo "   User: admin"
     echo "   Password: qwe1daSjewspds12"
     echo ""
-    echo "🔗 Connection string: postgresql://admin:qwe1daSjewspds12@localhost:5433/trials_db"
+    echo "🔗 Connection string: postgresql://admin:qwe1daSjewspds12@localhost:5432/trials_db"
     exit 0
 fi
 
@@ -32,12 +32,12 @@ for i in {1..30}; do
         echo ""
         echo "📊 Информация о подключении:"
         echo "   Host: localhost"
-        echo "   Port: 5433"
+        echo "   Port: 5432"
         echo "   Database: trials_db"
         echo "   User: admin"
         echo "   Password: qwe1daSjewspds12"
         echo ""
-        echo "🔗 Connection string: postgresql://admin:qwe1daSjewspds12@localhost:5433/trials_db"
+        echo "🔗 Connection string: postgresql://admin:qwe1daSjewspds12@localhost:5432/trials_db"
         echo ""
         echo "💡 Для запуска микросервиса используйте: ./start-service.sh"
         exit 0
@@ -50,6 +50,8 @@ echo ""
 echo "❌ БД не готова после 30 секунд ожидания"
 echo "📜 Проверьте логи: docker-compose logs trials-db"
 exit 1
+
+
 
 
 

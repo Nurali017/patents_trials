@@ -6,6 +6,8 @@ from rest_framework.decorators import action
 from rest_framework.response import Response
 from django.utils import timezone
 from django.db import models as django_models
+from django_filters.rest_framework import DjangoFilterBackend
+from rest_framework.pagination import PageNumberPagination
 
 from ..models import (
     Oblast, Region, ClimateZone, Indicator, GroupCulture, Culture,
@@ -25,6 +27,7 @@ from ..serializers import (
     TrialPlanAddCultureSerializer, create_basic_trial_results,
     create_quality_trial_results
 )
+from ..filters import ApplicationFilter
 from ..patents_integration import patents_api
 
 
@@ -33,10 +36,44 @@ class ApplicationViewSet(viewsets.ModelViewSet):
     Управление заявками на сортоиспытания
     
     Заявка → Распределение по областям → Испытания → Решения → Реестр
+    
+    Поддерживает расширенную фильтрацию и пагинацию:
+    - Фильтрация по группе культур (culture_group) - локальный ID группы культур
+    - Фильтрация по названию группы культур (culture_group_name) - поиск по названию
+    - Фильтрация по культуре (culture) - локальный ID культуры  
+    - Фильтрация по культуре из Patents Service (patents_culture_id) - ID культуры в Patents Service
+    - Фильтрация по группе культур из Patents Service (patents_group_id) - ID группы культур в Patents Service
+    - Фильтрация по статусу (status)
+    - Фильтрация по области (oblast) - ID области
+    - Фильтрация по году подачи заявки (year)
+    - Поиск по номеру заявки или названию сорта (search)
+    - Поиск по группе культур (group_search) - поиск по названию или коду группы
+    - Пагинация с настраиваемым размером страницы
+    
+    Примеры использования:
+    - GET /api/applications/?patents_culture_id=720&page=1&page_size=20
+    - GET /api/applications/?patents_group_id=1&search=пшеница
+    - GET /api/applications/?status=submitted&patents_culture_id=749
+    - GET /api/applications/?culture_group_name=зерновые
+    - GET /api/applications/?group_search=пшеница&year=2025
+    - GET /api/applications/?oblast=1&culture_group=2
+    - GET /api/applications/?patents_group_id=1&patents_culture_id=720
     """
-    queryset = Application.objects.filter(is_deleted=False)
+    queryset = Application.objects.filter(is_deleted=False).select_related(
+        'sort_record__culture__group_culture'
+    ).prefetch_related('target_oblasts')
     serializer_class = ApplicationSerializer
     permission_classes = [permissions.IsAuthenticated]  # Требуется авторизация
+    
+    # Фильтрация
+    filter_backends = [DjangoFilterBackend]
+    filterset_class = ApplicationFilter
+    
+    # Пагинация
+    pagination_class = PageNumberPagination
+    page_size = 20
+    page_size_query_param = 'page_size'
+    max_page_size = 100
     
     def perform_create(self, serializer):
         """При создании заявки устанавливаем created_by"""
@@ -427,6 +464,64 @@ class ApplicationViewSet(viewsets.ModelViewSet):
             'application_status': application.status,
             'total_regions': len(regions_data),
             'regions': regions_data
+        })
+    
+    @action(detail=False, methods=['get'], url_path='culture-groups-stats')
+    def culture_groups_stats(self, request):
+        """
+        Получить статистику заявок по группам культур
+        
+        GET /api/v1/applications/culture-groups-stats/
+        GET /api/v1/applications/culture-groups-stats/?year=2025
+        GET /api/v1/applications/culture-groups-stats/?status=submitted
+        """
+        from django.db.models import Count, Q
+        
+        # Базовый queryset
+        queryset = self.get_queryset()
+        
+        # Фильтры
+        year = request.query_params.get('year')
+        status = request.query_params.get('status')
+        
+        if year:
+            queryset = queryset.filter(created_at__year=year)
+        if status:
+            queryset = queryset.filter(status=status)
+        
+        # Статистика по группам культур
+        stats = queryset.values(
+            'sort_record__culture__group_culture__id',
+            'sort_record__culture__group_culture__name',
+            'sort_record__culture__group_culture__code',
+            'sort_record__culture__group_culture__group_culture_id'
+        ).annotate(
+            applications_count=Count('id'),
+            cultures_count=Count('sort_record__culture', distinct=True)
+        ).order_by('-applications_count')
+        
+        # Общая статистика
+        total_applications = queryset.count()
+        total_culture_groups = stats.count()
+        
+        return Response({
+            'total_applications': total_applications,
+            'total_culture_groups': total_culture_groups,
+            'filters_applied': {
+                'year': year,
+                'status': status
+            },
+            'culture_groups': [
+                {
+                    'id': stat['sort_record__culture__group_culture__id'],
+                    'name': stat['sort_record__culture__group_culture__name'],
+                    'code': stat['sort_record__culture__group_culture__code'],
+                    'patents_group_id': stat['sort_record__culture__group_culture__group_culture_id'],
+                    'applications_count': stat['applications_count'],
+                    'cultures_count': stat['cultures_count']
+                }
+                for stat in stats
+            ]
         })
     
     @action(detail=False, methods=['get'], url_path='pending-for-region')

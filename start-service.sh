@@ -46,7 +46,7 @@ fi
 echo "✅ БД доступна!"
 echo ""
 echo "🚀 Запускаем микросервис..."
-docker-compose up --build -d trials-service
+docker-compose up --build -d trials_service
 
 # Ждем запуска сервиса
 echo "⏳ Ожидание запуска сервиса..."
@@ -56,7 +56,7 @@ sleep 3
 echo ""
 echo "📜 Логи запуска (Ctrl+C для выхода):"
 echo "===================================="
-docker-compose logs -f trials-service &
+docker-compose logs -f trials_service &
 LOGS_PID=$!
 
 # Ждем несколько секунд и показываем информацию
@@ -71,8 +71,10 @@ echo "   🌐 API: http://localhost:8001/api/"
 echo "   📚 Swagger: http://localhost:8001/swagger/"
 echo "   ⚙️  Admin: http://localhost:8001/admin/"
 echo ""
-echo "💡 Для просмотра логов: docker-compose logs -f trials-service"
-echo "💡 Для остановки: docker-compose stop trials-service"
+echo "💡 Для просмотра логов: docker-compose logs -f trials_service"
+echo "💡 Для остановки: docker-compose stop trials_service"
+
+
 
 
 

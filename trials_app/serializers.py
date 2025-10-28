@@ -301,6 +301,10 @@ class ApplicationSerializer(serializers.ModelSerializer):
     target_oblasts_data = OblastSerializer(source='target_oblasts', many=True, read_only=True)
     created_by_name = serializers.CharField(source='created_by.username', read_only=True)
     
+    # Информация о культуре для фильтрации (оптимизировано)
+    culture_name = serializers.CharField(source='sort_record.culture.name', read_only=True)
+    culture_group_name = serializers.CharField(source='sort_record.culture.group_culture.name', read_only=True)
+    
     # Принимаем sort_id из Patents Service
     sort_id = serializers.IntegerField(write_only=True, required=False)
     
