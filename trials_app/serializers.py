@@ -240,6 +240,14 @@ class SortRecordSerializer(serializers.ModelSerializer):
         help_text="ID культуры в Patents Service"
     )
     
+    # Поддержка поля code (маппится на public_code)
+    code = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        source='public_code',
+        help_text="Код сорта (сохраняется как public_code)"
+    )
+    
     class Meta:
         model = SortRecord
         fields = '__all__'

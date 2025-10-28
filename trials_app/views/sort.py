@@ -30,6 +30,9 @@ from ..serializers import (
 )
 from ..patents_integration import patents_api
 from ..filters import OriginatorFilter
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 class OriginatorViewSet(viewsets.ModelViewSet):
@@ -211,16 +214,22 @@ class SortRecordViewSet(viewsets.ModelViewSet):
         # Сначала создаем в Patents Service
         sort_data = serializer.validated_data.copy()
         
+        logger.info(f"Создание сорта: {sort_data}")
+        
         # Подготавливаем данные для Patents Service
         patents_data = {
             'name': sort_data.get('name'),
-            'code': sort_data.get('code', ''),
+            'code': sort_data.get('public_code', ''),  # Используем public_code из сериализатора
             'culture': sort_data.get('culture').culture_id if sort_data.get('culture') else None,
-            'originators': [sort_data.get('originators')] if sort_data.get('originators') else [],
+            'originators': [],  # Оригинаторы будут обработаны после создания сорта
         }
+        
+        logger.info(f"Данные для Patents Service: {patents_data}")
         
         # Создаем в Patents Service
         patents_sort = patents_api.create_sort(patents_data)
+        
+        logger.info(f"Ответ от Patents Service: {patents_sort}")
         
         if patents_sort:
             # Если успешно создали в Patents Service, сохраняем локально
@@ -228,16 +237,74 @@ class SortRecordViewSet(viewsets.ModelViewSet):
                 sort_id=patents_sort.get('id'),
                 synced_at=timezone.now()
             )
+            
+            logger.info(f"Сорт создан локально с ID: {sort.id}, Patents ID: {sort.sort_id}")
+            
+            # Обрабатываем оригинаторов после создания сорта
+            self._handle_originators(sort, sort_data.get('originators', []))
+            
             return sort
         else:
             # Если не удалось создать в Patents Service, создаем только локально
             # с временным sort_id (будет обновлен при синхронизации)
+            logger.warning("Не удалось создать сорт в Patents Service, создаем локально")
             import random
             temp_id = random.randint(100000, 999999)
-            return serializer.save(
+            sort = serializer.save(
                 sort_id=temp_id,
                 synced_at=None
             )
+            
+            logger.info(f"Сорт создан локально с временным ID: {sort.id}, temp Patents ID: {sort.sort_id}")
+            
+            # Обрабатываем оригинаторов даже при локальном создании
+            self._handle_originators(sort, sort_data.get('originators', []))
+            
+            return sort
+    
+    def _handle_originators(self, sort_record, originators_data):
+        """
+        Обработать оригинаторов для созданного сорта
+        
+        Args:
+            sort_record: созданный SortRecord
+            originators_data: список оригинаторов из запроса
+                [{"originator_id": 1, "percentage": 100}]
+        """
+        from trials_app.models import SortOriginator, Originator
+        
+        if not originators_data:
+            return
+        
+        # Удаляем старые связи (если есть)
+        SortOriginator.objects.filter(sort_record=sort_record).delete()
+        
+        # Создаем новые связи
+        for orig_data in originators_data:
+            originator_id = orig_data.get('originator_id')
+            percentage = orig_data.get('percentage', 100)
+            
+            if not originator_id:
+                continue
+            
+            try:
+                # Находим оригинатора по originator_id (ID в Patents Service)
+                originator = Originator.objects.get(
+                    originator_id=originator_id,
+                    is_deleted=False
+                )
+                
+                # Создаем связь
+                SortOriginator.objects.create(
+                    sort_record=sort_record,
+                    originator=originator,
+                    percentage=percentage
+                )
+                
+            except Originator.DoesNotExist:
+                # Если оригинатор не найден, пропускаем
+                logger.warning(f"Оригинатор с Patents ID {originator_id} не найден")
+                continue
     
     def perform_update(self, serializer):
         """

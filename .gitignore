@@ -103,12 +103,19 @@ celerybeat.pid
 
 # Environments
 .env
+.env*
 .venv
 env/
 venv/
 ENV/
 env.bak/
 venv.bak/
+
+# Local development files
+.env dev
+.env.local
+.env.development
+.env.production
 
 # Spyder project settings
 .spyderproject

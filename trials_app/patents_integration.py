@@ -142,7 +142,15 @@ class PatentsServiceClient:
         kwargs['headers'] = headers
         
         try:
+            logger.info(f"Отправка запроса к Patents Service: {method} {url}")
+            logger.info(f"Заголовки: {headers}")
+            if 'json' in kwargs:
+                logger.info(f"Тело запроса: {kwargs['json']}")
+            
             response = requests.request(method, url, **kwargs)
+            
+            logger.info(f"Ответ от Patents Service: {response.status_code}")
+            logger.info(f"Заголовки ответа: {dict(response.headers)}")
             
             # Если получили 401, пробуем обновить токен и повторить
             if response.status_code == 401 and self.service_username:
@@ -151,13 +159,17 @@ class PatentsServiceClient:
                 headers = self._get_headers()
                 kwargs['headers'] = headers
                 response = requests.request(method, url, **kwargs)
+                logger.info(f"Повторный запрос: {response.status_code}")
             
             # Проверяем статус после возможного обновления токена
-            if response.status_code == 200 or response.status_code == 204:
+            if response.status_code in [200, 201, 204]:
                 if response.status_code == 204:
                     return True  # Для DELETE операций
-                return response.json()
+                response_data = response.json()
+                logger.info(f"Успешный ответ: {response_data}")
+                return response_data
             else:
+                logger.error(f"Ошибка HTTP {response.status_code}: {response.text}")
                 response.raise_for_status()
             
         except requests.exceptions.RequestException as e:
