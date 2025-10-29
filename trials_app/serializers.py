@@ -203,6 +203,12 @@ class TrialTypeSerializer(serializers.ModelSerializer):
 
 class OriginatorSerializer(serializers.ModelSerializer):
     """Сериализатор для создания и обновления оригинаторов"""
+    originator_id = serializers.IntegerField(read_only=True, help_text="ID оригинатора в Patents Service (автоматически назначается)")
+    code = serializers.IntegerField(required=False, allow_null=True, help_text="Код оригинатора")
+    synced_at = serializers.DateTimeField(read_only=True)
+    created_at = serializers.DateTimeField(read_only=True)
+    updated_at = serializers.DateTimeField(read_only=True)
+    
     class Meta:
         model = Originator
         fields = ['id', 'originator_id', 'name', 'code', 'is_foreign', 'is_nanoc', 'synced_at', 'created_at', 'updated_at']

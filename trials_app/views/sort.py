@@ -77,10 +77,13 @@ class OriginatorViewSet(viewsets.ModelViewSet):
         # Убираем поля, которые не нужны для Patents Service
         patents_data = {
             'name': originator_data.get('name'),
-            'code': originator_data.get('code'),
             'is_foreign': originator_data.get('is_foreign', False),
             'is_nanoc': originator_data.get('is_nanoc', False),
         }
+        
+        # Включаем code только если он указан (не None)
+        if 'code' in originator_data and originator_data.get('code') is not None:
+            patents_data['code'] = originator_data.get('code')
         
         # Создаем в Patents Service
         patents_originator = patents_api.create_originator(patents_data)
