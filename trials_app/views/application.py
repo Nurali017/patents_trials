@@ -7,6 +7,7 @@ from rest_framework.response import Response
 from django.utils import timezone
 from django.db import models as django_models
 from django_filters.rest_framework import DjangoFilterBackend
+from rest_framework.filters import OrderingFilter
 from rest_framework.pagination import PageNumberPagination
 
 from ..models import (
@@ -37,10 +38,10 @@ class ApplicationViewSet(viewsets.ModelViewSet):
     
     Заявка → Распределение по областям → Испытания → Решения → Реестр
     
-    Поддерживает расширенную фильтрацию и пагинацию:
+    Поддерживает расширенную фильтрацию, сортировку и пагинацию:
     - Фильтрация по группе культур (culture_group) - локальный ID группы культур
     - Фильтрация по названию группы культур (culture_group_name) - поиск по названию
-    - Фильтрация по культуре (culture) - локальный ID культуры  
+    - Фильтрация по культуре (culture) - локальный ID культуры
     - Фильтрация по культуре из Patents Service (patents_culture_id) - ID культуры в Patents Service
     - Фильтрация по группе культур из Patents Service (patents_group_id) - ID группы культур в Patents Service
     - Фильтрация по статусу (status)
@@ -48,6 +49,8 @@ class ApplicationViewSet(viewsets.ModelViewSet):
     - Фильтрация по году подачи заявки (year)
     - Поиск по номеру заявки или названию сорта (search)
     - Поиск по группе культур (group_search) - поиск по названию или коду группы
+    - Сортировка (ordering) - по полям: application_number, submission_date, id, created_at, updated_at
+      Используйте префикс "-" для сортировки по убыванию, например: ?ordering=-application_number
     - Пагинация с настраиваемым размером страницы
     
     Примеры использования:
@@ -58,6 +61,9 @@ class ApplicationViewSet(viewsets.ModelViewSet):
     - GET /api/applications/?group_search=пшеница&year=2025
     - GET /api/applications/?oblast=1&culture_group=2
     - GET /api/applications/?patents_group_id=1&patents_culture_id=720
+    - GET /api/applications/?ordering=application_number
+    - GET /api/applications/?ordering=-application_number
+    - GET /api/applications/?ordering=submission_date
     """
     queryset = Application.objects.filter(is_deleted=False).select_related(
         'sort_record__culture__group_culture'
@@ -65,9 +71,11 @@ class ApplicationViewSet(viewsets.ModelViewSet):
     serializer_class = ApplicationSerializer
     permission_classes = [permissions.IsAuthenticated]  # Требуется авторизация
     
-    # Фильтрация
-    filter_backends = [DjangoFilterBackend]
+    # Фильтрация и сортировка
+    filter_backends = [DjangoFilterBackend, OrderingFilter]
     filterset_class = ApplicationFilter
+    ordering_fields = ['application_number', 'submission_date', 'id', 'created_at', 'updated_at']
+    ordering = ['-id']  # Сортировка по умолчанию (последние сначала)
     
     # Пагинация
     pagination_class = PageNumberPagination
