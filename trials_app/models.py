@@ -454,6 +454,34 @@ class SortOriginator(models.Model):
         return f"{self.originator.name} - {self.percentage}%"
 
 
+class SortOblast(models.Model):
+    """
+    Связь сорта с областями (ManyToMany)
+
+    Определяет в каких областях может выращиваться сорт
+    """
+    sort_record = models.ForeignKey(
+        'SortRecord',
+        on_delete=models.CASCADE,
+        related_name='sort_oblasts'
+    )
+    oblast = models.ForeignKey(
+        Oblast,
+        on_delete=models.CASCADE,
+        related_name='sort_oblasts'
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        verbose_name = "Сорт-Область"
+        verbose_name_plural = "Сорта-Области"
+        unique_together = ['sort_record', 'oblast']
+        ordering = ['oblast__name']
+
+    def __str__(self):
+        return f"{self.sort_record.name} - {self.oblast.name}"
+
+
 class SortRecord(SoftDeleteModel):
     """
     Локальная копия данных сорта из Patents Service

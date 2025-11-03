@@ -199,7 +199,6 @@ class TrialPlanViewSet(viewsets.ModelViewSet):
                 application_obj = None
                 if application_id:
                     try:
-                        from .models import Application
                         application_obj = Application.objects.get(id=application_id)
                     except Application.DoesNotExist:
                         return Response({
@@ -797,7 +796,6 @@ class TrialPlanViewSet(viewsets.ModelViewSet):
         application_obj = None
         if application_id:
             try:
-                from .models import Application
                 application_obj = Application.objects.get(id=application_id)
             except Application.DoesNotExist:
                 return Response(
@@ -843,9 +841,13 @@ class TrialPlanViewSet(viewsets.ModelViewSet):
     def create_trial(self, request, pk=None):
         """
         Создать Trial из плана для конкретного ГСУ и культуры
-        
-        ВАЖНО: Создает ОТДЕЛЬНОЕ ИСПЫТАНИЕ для каждой группы спелости!
-        Согласно методике формы 008: "Форма заполняется строго для одной группы спелости"
+
+        ВАЖНО: Создает ОТДЕЛЬНОЕ ИСПЫТАНИЕ для каждой комбинации (группа спелости + предшественник)!
+
+        Агрономическое обоснование:
+        - Согласно методике формы 008: "Форма заполняется строго для одной группы спелости"
+        - Предшественник существенно влияет на условия испытания
+        - Каждая уникальная комбинация требует отдельного опыта
         
         POST /api/v1/trial-plans/{id}/create-trial/
         {
@@ -870,24 +872,37 @@ class TrialPlanViewSet(viewsets.ModelViewSet):
         Response:
         {
             "success": true,
-            "trials_created": 2,
+            "trials_created": 3,
             "trials": [
                 {
                     "trial_id": 20,
                     "maturity_group_code": "D03",
                     "maturity_group_name": "Средний (среднеспелый)",
+                    "predecessor_code": "ПАР",
+                    "predecessor_name": "Пар",
                     "total_participants": 5,
                     "status": "active"
                 },
                 {
                     "trial_id": 21,
-                    "maturity_group_code": "D07", 
+                    "maturity_group_code": "D03",
+                    "maturity_group_name": "Средний (среднеспелый)",
+                    "predecessor_code": "Пшеница",
+                    "predecessor_name": "Пшеница",
+                    "total_participants": 3,
+                    "status": "active"
+                },
+                {
+                    "trial_id": 22,
+                    "maturity_group_code": "D07",
                     "maturity_group_name": "Среднеранний",
+                    "predecessor_code": "ПАР",
+                    "predecessor_name": "Пар",
                     "total_participants": 6,
                     "status": "active"
                 }
             ],
-            "message": "Created 2 trials for different maturity groups"
+            "message": "Created 3 trial(s) for different combinations of maturity groups and predecessors"
         }
         """
         trial_plan = self.get_object()
@@ -936,82 +951,95 @@ class TrialPlanViewSet(viewsets.ModelViewSet):
                 'error': f'No participants found in plan for region {region.name} and culture {culture.name}'
             }, status=400)
         
-        # === СГРУППИРОВАТЬ УЧАСТНИКОВ ПО ГРУППАМ СПЕЛОСТИ ===
-        participants_by_maturity_group = {}
-        
+        # === СГРУППИРОВАТЬ УЧАСТНИКОВ ПО (ГРУППА СПЕЛОСТИ + ПРЕДШЕСТВЕННИК) ===
+        # Ключ: (maturity_group_code, predecessor)
+        participants_by_group = {}
+
         for plan_trial in trial_plan_trials:
             participant = plan_trial.participant
-            
+
             # Исключить участников из списка exclude_participants
             if participant.patents_sort_id in exclude_participants:
                 continue
-            
+
             # Получить сорт и проверить культуру
             sort_record, _ = SortRecord.objects.get_or_create(
                 sort_id=participant.patents_sort_id,
                 defaults={'name': f'Сорт {participant.patents_sort_id}'}
             )
-            
+
             # Синхронизировать если нужно
             if not sort_record.culture:
                 sort_record.sync_from_patents()
-            
+
             # Проверить что культура совпадает
             if sort_record.culture and sort_record.culture.id != culture.id:
                 continue
-            
+
             # Получить группу спелости из заявки или сорта
             maturity_group_code = self._get_maturity_group_code(participant, sort_record)
-            
-            # Группировать по коду группы спелости
-            if maturity_group_code not in participants_by_maturity_group:
-                participants_by_maturity_group[maturity_group_code] = []
-            
+
+            # Получить предшественника
+            predecessor = plan_trial.predecessor
+
+            # Группировать по комбинации (группа спелости, предшественник)
+            group_key = (maturity_group_code, predecessor)
+            if group_key not in participants_by_group:
+                participants_by_group[group_key] = []
+
             # Избегаем дубликатов внутри группы
-            existing_sort_ids = {p['participant'].patents_sort_id for p in participants_by_maturity_group[maturity_group_code]}
+            existing_sort_ids = {p['participant'].patents_sort_id for p in participants_by_group[group_key]}
             if participant.patents_sort_id not in existing_sort_ids:
-                participants_by_maturity_group[maturity_group_code].append({
+                participants_by_group[group_key].append({
                     'participant': participant,
                     'sort_record': sort_record,
                     'plan_trial': plan_trial,
-                    'maturity_group_code': maturity_group_code
+                    'maturity_group_code': maturity_group_code,
+                    'predecessor': predecessor
                 })
         
-        if not participants_by_maturity_group:
+        if not participants_by_group:
             return Response({
                 'error': f'No matching participants found for culture {culture.name}'
             }, status=400)
         
-        # === СОЗДАТЬ ОТДЕЛЬНОЕ ИСПЫТАНИЕ ДЛЯ КАЖДОЙ ГРУППЫ СПЕЛОСТИ ===
+        # === СОЗДАТЬ ОТДЕЛЬНОЕ ИСПЫТАНИЕ ДЛЯ КАЖДОЙ КОМБИНАЦИИ (ГРУППА СПЕЛОСТИ + ПРЕДШЕСТВЕННИК) ===
         created_trials = []
-        
-        # Если указаны конкретные группы спелости - использовать их
-        if maturity_groups:
-            groups_to_create = maturity_groups
-        else:
-            # Создать для всех найденных групп
-            groups_to_create = []
-            for group_code, participants in participants_by_maturity_group.items():
-                groups_to_create.append({
-                    'code': group_code,
-                    'name': self._get_maturity_group_name(group_code)
-                })
-        
-        for group_info in groups_to_create:
-            group_code = group_info['code']
-            group_name = group_info['name']
-            
-            # Получить участников для этой группы спелости
-            group_participants = participants_by_maturity_group.get(group_code, [])
+
+        # Итерируем по всем комбинациям (группа спелости, предшественник)
+        for (maturity_code, predecessor_value), group_participants in participants_by_group.items():
+            group_code = maturity_code
+            group_name = self._get_maturity_group_name(group_code)
+
+            # Пропускаем если фильтр по группам спелости указан и текущая группа не в списке
+            if maturity_groups:
+                if not any(g.get('code') == group_code for g in maturity_groups):
+                    continue
             
             if not group_participants:
                 continue  # Пропускаем пустые группы
-            
+
             # Взять параметры из первого участника группы
             first_plan_trial = group_participants[0]['plan_trial']
             trial_start_date = start_date or timezone.now().date()
-            
-            # Создать Trial для этой группы спелости
+
+            # Получить объект Culture для предшественника
+            predecessor_culture_obj = self._get_predecessor_culture(predecessor_value)
+
+            # Сформировать коды предшественника
+            if predecessor_value == 'fallow':
+                predecessor_full_name = "ПАР"
+                predecessor_short_code = "ПАР"
+            else:
+                # Попытаться получить название культуры
+                if predecessor_culture_obj:
+                    predecessor_full_name = predecessor_culture_obj.name  # Полное название для predecessor_code
+                    predecessor_short_code = predecessor_culture_obj.name[:3].upper()  # Сокращение для trial_code
+                else:
+                    predecessor_full_name = str(predecessor_value)  # patents_culture_id
+                    predecessor_short_code = str(predecessor_value)[:3].upper()
+
+            # Создать Trial для этой комбинации (группа спелости + предшественник)
             trial = Trial.objects.create(
                 region=region,
                 culture=culture,
@@ -1019,7 +1047,7 @@ class TrialPlanViewSet(viewsets.ModelViewSet):
                 area_ha=area_ha,
                 year=trial_plan.year,
                 planting_season=first_plan_trial.season,
-                predecessor_culture=self._get_predecessor_culture(first_plan_trial.predecessor),
+                predecessor_culture=predecessor_culture_obj,
                 growing_conditions='rainfed',
                 cultivation_technology='traditional',
                 responsible_person=responsible_person,
@@ -1027,15 +1055,15 @@ class TrialPlanViewSet(viewsets.ModelViewSet):
                 status='active',
                 start_date=trial_start_date,
                 created_by=request.user,
-                
+
                 # ФОРМА 008: Группа спелости (КРИТИЧНО!)
                 maturity_group_code=group_code,
                 maturity_group_name=group_name,
-                
-                # Коды для отчетности
-                trial_code=f"{region.name[:3].upper()}-{trial_plan.year}-{group_code}",
+
+                # Коды для отчетности (с учетом предшественника)
+                trial_code=f"{region.name[:3].upper()}-{trial_plan.year}-{group_code}-{predecessor_short_code}",
                 culture_code=culture.name[:3].upper(),
-                predecessor_code=first_plan_trial.predecessor or "ПАР"
+                predecessor_code=predecessor_full_name  # Полное название
             )
             
             # Автоматически назначить только ОБЯЗАТЕЛЬНЫЕ показатели по культуре
@@ -1080,44 +1108,63 @@ class TrialPlanViewSet(viewsets.ModelViewSet):
                     status='distributed'
                 ).update(status='in_progress')
             
+            # Получить название предшественника для ответа
+            if predecessor_culture_obj:
+                predecessor_name = predecessor_culture_obj.name
+            else:
+                predecessor_name = "Пар"
+
             created_trials.append({
                 'trial_id': trial.id,
                 'maturity_group_code': group_code,
                 'maturity_group_name': group_name,
+                'predecessor_code': predecessor_full_name,  # Полное название
+                'predecessor_name': predecessor_name,
                 'total_participants': len(created_participants),
                 'status': trial.status,
                 'trial': TrialSerializer(trial).data
             })
-        
+
         if not created_trials:
             return Response({
                 'error': 'No trials were created. Check maturity groups configuration.'
             }, status=400)
-        
+
         return Response({
             'success': True,
             'trials_created': len(created_trials),
             'trials': created_trials,
-            'message': f'Created {len(created_trials)} trial(s) for different maturity groups'
+            'message': f'Created {len(created_trials)} trial(s) for different combinations of maturity groups and predecessors'
         })
     
     def _get_maturity_group_code(self, participant, sort_record):
         """
         Определить код группы спелости для участника
-        
+
         Приоритет:
-        1. Из заявки (application.maturity_group)
-        2. Из сорта (sort_record.maturity_group)
+        1. Из участника плана (participant.maturity_group) - самый актуальный источник
+        2. Из заявки (application.maturity_group) - если участник связан с заявкой
         3. По умолчанию "D01"
-        
+
         Args:
             participant: TrialPlanParticipant
             sort_record: SortRecord
-            
+
         Returns:
             str: код группы спелости (D01, D03, D07...)
         """
-        # 1. Попробовать из заявки
+        # 1. Попробовать из самого участника плана (приоритет, т.к. может быть задан вручную)
+        if participant.maturity_group:
+            maturity_group = participant.maturity_group
+            # Извлечь код из строки типа "D07 - Среднеспелая группа"
+            if isinstance(maturity_group, str) and '-' in maturity_group:
+                code = maturity_group.split('-')[0].strip()
+                if code.startswith('D') and code[1:].isdigit():
+                    return code
+            elif isinstance(maturity_group, str) and maturity_group.startswith('D'):
+                return maturity_group
+
+        # 2. Попробовать из заявки (если участник связан с заявкой)
         if participant.application and hasattr(participant.application, 'maturity_group'):
             maturity_group = participant.application.maturity_group
             if maturity_group:
@@ -1128,18 +1175,7 @@ class TrialPlanViewSet(viewsets.ModelViewSet):
                         return code
                 elif isinstance(maturity_group, str) and maturity_group.startswith('D'):
                     return maturity_group
-        
-        # 2. Попробовать из сорта
-        if sort_record and hasattr(sort_record, 'maturity_group'):
-            maturity_group = sort_record.maturity_group
-            if maturity_group:
-                if isinstance(maturity_group, str) and '-' in maturity_group:
-                    code = maturity_group.split('-')[0].strip()
-                    if code.startswith('D') and code[1:].isdigit():
-                        return code
-                elif isinstance(maturity_group, str) and maturity_group.startswith('D'):
-                    return maturity_group
-        
+
         # 3. По умолчанию
         return "D01"
     
@@ -1171,23 +1207,30 @@ class TrialPlanViewSet(viewsets.ModelViewSet):
     def _get_predecessor_culture(self, predecessor_value):
         """
         Получить Culture объект предшественника
-        
+
         Args:
-            predecessor_value: 'fallow' или ID культуры
-        
+            predecessor_value: 'fallow' или ID культуры (может быть int или str)
+
         Returns:
             Culture object или None
         """
+        if not predecessor_value:
+            return None
+
         if predecessor_value == 'fallow':
             return None
-        
-        if isinstance(predecessor_value, int):
+
+        # Попытаться преобразовать в int (если это строка с числом)
+        try:
+            patents_culture_id = int(predecessor_value)
             try:
-                return Culture.objects.get(id=predecessor_value, is_deleted=False)
+                # Искать по patents culture_id
+                return Culture.objects.get(culture_id=patents_culture_id, is_deleted=False)
             except Culture.DoesNotExist:
                 return None
-        
-        return None
+        except (ValueError, TypeError):
+            # Если не удалось преобразовать в int, возвращаем None
+            return None
     
     @action(detail=False, methods=['get'], url_path='my-tasks')
     def my_tasks(self, request):

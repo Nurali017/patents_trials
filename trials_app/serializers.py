@@ -1,7 +1,7 @@
 from rest_framework import serializers
 from .models import (
-    Oblast, Region, ClimateZone, Indicator, GroupCulture, Culture, Originator, SortOriginator, SortRecord, 
-    Application, PlannedDistribution, TrialType, Trial, TrialParticipant, TrialResult, 
+    Oblast, Region, ClimateZone, Indicator, GroupCulture, Culture, Originator, SortOriginator, SortOblast, SortRecord,
+    Application, PlannedDistribution, TrialType, Trial, TrialParticipant, TrialResult,
     TrialLaboratoryResult, Document, TrialPlan, TrialPlanParticipant, TrialPlanTrial, TrialPlanCulture,
     AnnualDecisionTable, AnnualDecisionItem
 )
@@ -33,8 +33,9 @@ def validate_and_normalize_predecessor(predecessor):
     if predecessor == 'fallow':
         return 'fallow'
     
-    # Если это целое число
+    # Если это целое число — трактуем как patents_culture_id (Culture.culture_id)
     if isinstance(predecessor, int) and predecessor > 0:
+        # Не проверяем локальный id, сохраняем как есть (patents id)
         return predecessor
     
     # Если это строка
@@ -45,10 +46,11 @@ def validate_and_normalize_predecessor(predecessor):
         
         # Пробуем преобразовать в число
         try:
-            culture_id = int(predecessor)
-            if culture_id <= 0:
+            raw_id = int(predecessor)
+            if raw_id <= 0:
                 raise serializers.ValidationError("culture_id must be positive")
-            return culture_id
+            # Возвращаем как patents_culture_id
+            return raw_id
         except ValueError:
             raise serializers.ValidationError(
                 "predecessor must be either 'fallow' or a positive culture_id (integer)"
@@ -230,6 +232,16 @@ class SortOriginatorSerializer(serializers.ModelSerializer):
         fields = ['id', 'originator', 'originator_name', 'originator_patents_id', 'percentage']
 
 
+class SortOblastSerializer(serializers.ModelSerializer):
+    """Сериализатор для связи сорт-область"""
+    oblast_name = serializers.CharField(source='oblast.name', read_only=True)
+    oblast_code = serializers.CharField(source='oblast.code', read_only=True)
+
+    class Meta:
+        model = SortOblast
+        fields = ['id', 'oblast', 'oblast_name', 'oblast_code', 'created_at']
+
+
 class SortRecordSerializer(serializers.ModelSerializer):
     patents_sort_data = serializers.ReadOnlyField()
     culture_name = serializers.CharField(source='culture.name', read_only=True)
@@ -299,6 +311,44 @@ class SortRecordSerializer(serializers.ModelSerializer):
             sort_record=obj
         ).select_related('originator')
         return SortOriginatorSerializer(sort_originators, many=True).data
+
+
+class SortRecordByCultureSerializer(serializers.ModelSerializer):
+    """Сериализатор для эндпоинта получения сортов по культуре и области"""
+    culture_name = serializers.CharField(source='culture.name', read_only=True)
+    group_culture_name = serializers.CharField(source='culture.group_culture.name', read_only=True, allow_null=True)
+    patents_status_display = serializers.CharField(source='get_patents_status_display', read_only=True)
+
+    # Информация об оригинаторах
+    originators = serializers.SerializerMethodField()
+
+    # Информация об областях
+    oblasts = serializers.SerializerMethodField()
+
+    class Meta:
+        model = SortRecord
+        fields = [
+            'id', 'sort_id', 'name', 'public_code', 'patents_status', 'patents_status_display',
+            'lifestyle', 'characteristic', 'development_cycle', 'culture', 'culture_name',
+            'group_culture_name', 'applicant', 'patent_nis', 'note', 'trial_notes',
+            'originators', 'oblasts', 'created_at', 'updated_at'
+        ]
+
+    def get_originators(self, obj):
+        """Получить список оригинаторов сорта"""
+        from trials_app.models import SortOriginator
+        sort_originators = SortOriginator.objects.filter(
+            sort_record=obj
+        ).select_related('originator')
+        return SortOriginatorSerializer(sort_originators, many=True).data
+
+    def get_oblasts(self, obj):
+        """Получить список областей для сорта"""
+        from trials_app.models import SortOblast
+        sort_oblasts = SortOblast.objects.filter(
+            sort_record=obj
+        ).select_related('oblast')
+        return SortOblastSerializer(sort_oblasts, many=True).data
 
 
 class ApplicationSerializer(serializers.ModelSerializer):
@@ -1066,28 +1116,26 @@ class TrialPlanSerializer(serializers.ModelSerializer):
         if not predecessor:
             return None
         
-        # Если predecessor это "fallow" или другие строковые значения
+        # Если predecessor это "fallow" или строка-число (patents culture_id)
         if isinstance(predecessor, str):
             if predecessor == "fallow":
                 return "Пар"
-            # Проверяем, является ли строка числом (culture_id)
             try:
-                culture_id = int(predecessor)
-                # Получаем название культуры по ID
+                patents_culture_id = int(predecessor)
                 from .models import Culture
                 try:
-                    culture = Culture.objects.get(id=culture_id, is_deleted=False)
+                    culture = Culture.objects.get(culture_id=patents_culture_id, is_deleted=False)
                     return culture.name
                 except Culture.DoesNotExist:
                     return None
             except ValueError:
-                return predecessor  # Возвращаем как есть, если не число
+                return predecessor
         
-        # Если predecessor это число (culture_id)
+        # Если predecessor это число (patents culture_id)
         if isinstance(predecessor, int):
             from .models import Culture
             try:
-                culture = Culture.objects.get(id=predecessor, is_deleted=False)
+                culture = Culture.objects.get(culture_id=predecessor, is_deleted=False)
                 return culture.name
             except Culture.DoesNotExist:
                 return None
@@ -1120,15 +1168,43 @@ class TrialPlanSerializer(serializers.ModelSerializer):
 
 class TrialPlanTrialSerializer(serializers.ModelSerializer):
     """Сериализатор для испытания в плане (только чтение)"""
-    
+
     region_id = serializers.IntegerField(source='region.id', read_only=True)
     region_name = serializers.CharField(source='region.name', read_only=True)
     trial_type_id = serializers.IntegerField(source='trial_type.id', read_only=True, allow_null=True)
     trial_type_name = serializers.CharField(source='trial_type.name', read_only=True, allow_null=True)
-    
+    predecessor_culture_name = serializers.SerializerMethodField(read_only=True)
+    predecessor_name = serializers.SerializerMethodField(read_only=True)  # Алиас для удобства фронта
+
     class Meta:
         model = TrialPlanTrial
-        fields = ['region_id', 'region_name', 'predecessor', 'seeding_rate', 'season', 'trial_type_id', 'trial_type_name']
+        fields = ['region_id', 'region_name', 'predecessor', 'predecessor_culture_name', 'predecessor_name', 'seeding_rate', 'season', 'trial_type_id', 'trial_type_name']
+
+    def get_predecessor_culture_name(self, obj):
+        """Возвращает название культуры-предшественника по patents_culture_id или 'Пар'"""
+        return self._get_predecessor_name(obj)
+
+    def get_predecessor_name(self, obj):
+        """Возвращает название культуры-предшественника по patents_culture_id или 'Пар' (алиас для predecessor_culture_name)"""
+        return self._get_predecessor_name(obj)
+
+    def _get_predecessor_name(self, obj):
+        """Внутренний метод для получения названия предшественника"""
+        if not hasattr(obj, 'predecessor'):
+            return None
+        value = obj.predecessor
+        if value == 'fallow':
+            return 'Пар'
+        # try interpret as int patents_culture_id
+        try:
+            patents_culture_id = int(value)
+        except (TypeError, ValueError):
+            return None
+        try:
+            culture = Culture.objects.get(culture_id=patents_culture_id, is_deleted=False)
+            return culture.name
+        except Culture.DoesNotExist:
+            return None
 
 
 class TrialPlanTrialCreateSerializer(serializers.ModelSerializer):

@@ -105,3 +105,6 @@ echo "   Логи: docker-compose logs -f"
 
 
 
+
+
+

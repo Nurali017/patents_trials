@@ -204,7 +204,7 @@ class SortRecordViewSet(viewsets.ModelViewSet):
     
     def get_permissions(self):
         """Чтение - всем, изменение/синхронизация - только авторизованным"""
-        if self.action in ['list', 'retrieve']:
+        if self.action in ['list', 'retrieve', 'by_culture']:
             return [permissions.AllowAny()]
         return [permissions.IsAuthenticated()]
     
@@ -397,6 +397,61 @@ class SortRecordViewSet(viewsets.ModelViewSet):
             'failed': len(errors),
             'failed_ids': errors
         })
+
+    @action(detail=False, methods=['get'], url_path='by-culture')
+    def by_culture(self, request):
+        """
+        Получить сорта по культуре и области
+
+        GET /api/sort-records/by-culture/?culture_id=71&oblast_id=17
+
+        Параметры:
+        - culture_id (int): Локальный ID культуры из таблицы Culture (обязательный)
+        - oblast_id (int): ID области из таблицы Oblast (обязательный)
+
+        Возвращает список сортов, которые принадлежат указанной культуре
+        и связаны с указанной областью через таблицу SortOblast
+        """
+        from ..serializers import SortRecordByCultureSerializer
+        from ..models import SortOblast
+
+        culture_id = request.query_params.get('culture_id')
+        oblast_id = request.query_params.get('oblast_id')
+
+        if not culture_id:
+            return Response({
+                'error': 'Параметр culture_id обязателен'
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+        if not oblast_id:
+            return Response({
+                'error': 'Параметр oblast_id обязателен'
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            culture_id = int(culture_id)
+            oblast_id = int(oblast_id)
+        except ValueError:
+            return Response({
+                'error': 'culture_id и oblast_id должны быть целыми числами'
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+        # Получаем ID сортов, связанных с указанной областью
+        sort_ids_with_oblast = SortOblast.objects.filter(
+            oblast_id=oblast_id
+        ).values_list('sort_record_id', flat=True)
+
+        # Фильтруем сорта по культуре (локальный ID) и области
+        sorts = self.get_queryset().filter(
+            culture_id=culture_id,  # culture_id - это локальный ID культуры
+            id__in=sort_ids_with_oblast
+        ).select_related('culture', 'culture__group_culture').prefetch_related(
+            'sort_originators__originator',
+            'sort_oblasts__oblast'
+        )
+
+        serializer = SortRecordByCultureSerializer(sorts, many=True)
+        return Response(serializer.data)
 
 
 

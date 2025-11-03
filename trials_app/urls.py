@@ -67,8 +67,4 @@ urlpatterns = [
     path('patents/sorts/', views.get_sorts, name='get-sorts'),
     path('patents/sorts/create/', views.create_sort, name='create-sort'),
     path('patents/sorts/<int:sort_id>/', views.get_sort_detail, name='get-sort-detail'),
-    
-    
-    # Сорта с маппингом культур (для Trials)
-    path('sort-records/by-culture/', views.get_sorts_for_trial_culture, name='get-sorts-for-trial-culture'),
 ]

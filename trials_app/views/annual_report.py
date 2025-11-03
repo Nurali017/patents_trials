@@ -147,23 +147,41 @@ class AnnualReportViewSet(viewsets.ViewSet):
     def methodology_table(self, request):
         """
         Получить таблицу по методике сортоиспытаний
-        
-        GET /api/annual-reports/methodology-table/?year=2025&oblast_id=17
-        
+
+        GET /api/annual-reports/methodology-table/?year=2025&oblast_id=17&patents_culture_id=720
+
+        Query Parameters:
+        - year (required): Год отчета
+        - oblast_id (required): ID области
+        - patents_culture_id (optional): ID культуры из Patents для фильтрации
+
         Returns: Таблица с группировкой по регионам и группам спелости
         """
         year = request.query_params.get('year')
         oblast_id = request.query_params.get('oblast_id')
-        
+        patents_culture_id = request.query_params.get('patents_culture_id')  # Опциональный параметр
+
         if not year or not oblast_id:
             return Response({
                 'success': False,
                 'error': 'year and oblast_id are required'
             }, status=status.HTTP_400_BAD_REQUEST)
-        
+
         try:
             oblast = Oblast.objects.get(id=oblast_id)
             year_int = int(year)
+
+            # Валидация patents_culture_id (если указан)
+            patents_culture_id_int = None
+            if patents_culture_id:
+                try:
+                    patents_culture_id_int = int(patents_culture_id)
+                except ValueError:
+                    return Response({
+                        'success': False,
+                        'error': 'Invalid patents_culture_id format'
+                    }, status=status.HTTP_400_BAD_REQUEST)
+
         except Oblast.DoesNotExist:
             return Response({
                 'success': False,
@@ -174,33 +192,48 @@ class AnnualReportViewSet(viewsets.ViewSet):
                 'success': False,
                 'error': 'Invalid year format'
             }, status=status.HTTP_400_BAD_REQUEST)
-        
-        # Получить данные для таблицы по методике
-        methodology_data = self._generate_methodology_table(oblast, year_int)
-        
+
+        # Получить данные для таблицы по методике с фильтрацией по культуре
+        methodology_data = self._generate_methodology_table(oblast, year_int, patents_culture_id_int)
+
         # Добавить рекомендации из SummaryService
         methodology_data = self._add_summary_recommendations(methodology_data, oblast, year_int)
-        
+
         return Response(methodology_data)
     
-    def _generate_methodology_table(self, oblast, year):
+    def _generate_methodology_table(self, oblast, year, patents_culture_id=None):
         """
         Генерация таблицы по методике сортоиспытаний
-        
+
+        Args:
+            oblast: Объект области
+            year: Год отчета
+            patents_culture_id: ID культуры из Patents для фильтрации (опционально)
+
         Структура:
         - Группировка по регионам
         - Внутри региона группировка по группам спелости
         - Для каждой группы сорта с показателями качества
         """
         from collections import defaultdict
-        
+
         # Получаем базовые данные
         basic_service = BasicReportService()
         basic_data = basic_service.generate_basic_report(oblast, year)
-        
+
+        # Фильтрация по культуре (если указан patents_culture_id)
+        if patents_culture_id is not None:
+            filtered_items = []
+            for item in basic_data['detailed_items']:
+                # Проверяем culture_id через sort_record
+                if (item.get('sort_record', {}).get('culture_id') == patents_culture_id or
+                    item.get('culture', {}).get('culture_id') == patents_culture_id):
+                    filtered_items.append(item)
+            basic_data['detailed_items'] = filtered_items
+
         # Группируем данные: регион -> группа спелости -> сорта
         regions_groups = defaultdict(lambda: defaultdict(list))
-        
+
         for item in basic_data['detailed_items']:
             # Все сорта в конкретных регионах (включая стандарты и испытываемые)
             if item.get('region', {}).get('id'):
@@ -220,6 +253,22 @@ class AnnualReportViewSet(viewsets.ViewSet):
                     'region': item['region']['name']
                 })
         
+        # Получить название культуры (если фильтр применен)
+        culture_filter_info = None
+        if patents_culture_id is not None:
+            from trials_app.models import Culture
+            try:
+                culture = Culture.objects.get(culture_id=patents_culture_id, is_deleted=False)
+                culture_filter_info = {
+                    'patents_culture_id': patents_culture_id,
+                    'culture_name': culture.name
+                }
+            except Culture.DoesNotExist:
+                culture_filter_info = {
+                    'patents_culture_id': patents_culture_id,
+                    'culture_name': f'Culture ID {patents_culture_id}'
+                }
+
         # Формируем структуру таблицы
         methodology_table = {
             'oblast': basic_data['oblast'],
@@ -231,7 +280,8 @@ class AnnualReportViewSet(viewsets.ViewSet):
             'standards_by_group': dict(standards_by_group),
             'quality_indicators': self._get_quality_indicators(),
             'warnings': basic_data['warnings'],
-            'has_warnings': basic_data['has_warnings']
+            'has_warnings': basic_data['has_warnings'],
+            'culture_filter': culture_filter_info  # Информация о примененном фильтре
         }
         
         # Заполняем таблицу по регионам и группам
