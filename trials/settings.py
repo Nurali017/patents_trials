@@ -159,3 +159,91 @@ LOGGING = {
         'level': 'INFO',
     },
 }
+
+# Пороговые значения для балльной оценки сортов
+EVALUATION_THRESHOLDS = {
+    'quality': {
+        'protein_content': {
+            'excellent': 15.0,
+            'good': 13.0,
+            'satisfactory': 11.0,
+            'poor': 9.0
+        },
+        'gluten_content': {
+            'excellent': 30.0,
+            'good': 25.0,
+            'satisfactory': 20.0,
+            'poor': 15.0
+        },
+        'vitreousness': {
+            'excellent': 90.0,
+            'good': 80.0,
+            'satisfactory': 70.0,
+            'poor': 60.0
+        },
+        'thousand_seed_weight': {
+            'excellent': 50.0,
+            'good': 45.0,
+            'satisfactory': 40.0,
+            'poor': 35.0
+        },
+        'minimum_indicators': 2,
+        'minimum_years_tested': 2,
+    },
+    'resistance': {
+        'disease_resistance': {
+            'excellent': 5.0,
+            'good': 4.0,
+            'satisfactory': 3.0,
+            'poor': 2.0,
+            'critical': 3.0
+        },
+        'lodging_resistance': {
+            'excellent': 5.0,
+            'good': 4.0,
+            'satisfactory': 3.0,
+            'poor': 2.0,
+            'critical': 3.0
+        },
+        'winter_hardiness': {
+            'excellent': 5.0,
+            'good': 4.0,
+            'satisfactory': 3.0,
+            'poor': 2.0,
+            'critical': 3.0
+        },
+        'drought_resistance': {
+            'excellent': 5.0,
+            'good': 4.0,
+            'satisfactory': 3.0,
+            'poor': 2.0
+        },
+        'shattering_resistance': {
+            'excellent': 5.0,
+            'good': 4.0,
+            'satisfactory': 3.0,
+            'poor': 2.0
+        },
+        'sprouting_resistance': {
+            'excellent': 5.0,
+            'good': 4.0,
+            'satisfactory': 3.0,
+            'poor': 2.0
+        },
+        'minimum_indicators': 2,
+        'minimum_years_tested': 2,
+        'critical_indicators': ['disease_resistance', 'lodging_resistance', 'winter_hardiness']
+    },
+    'yield': {
+        'deviation_significant_positive': 5.0,
+        'deviation_moderate_positive': 2.0,
+        'deviation_moderate_negative': -2.0,
+        'deviation_significant_negative': -5.0,
+        'statistical_significance_threshold': 50.0,
+    },
+    'violations': {
+        'critical_score_threshold': 2.0,
+        'minimum_years_tested': 2,
+        'minimum_coverage_percent': 40.0,
+    }
+}

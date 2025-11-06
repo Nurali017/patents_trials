@@ -7,40 +7,22 @@ from typing import Dict, List, Optional
 class QualityEvaluator:
     """
     Оценка качества зерна и продукции
+    Использует конфигурируемые пороги из Django settings
     """
     
     def __init__(self):
-        # Критерии качества по Методике ГСИ
-        self.quality_standards = {
-            'protein_content': {
-                'excellent': 15.0,      # 5 баллов
-                'good': 13.0,          # 4 балла  
-                'satisfactory': 11.0,  # 3 балла
-                'poor': 9.0            # 2 балла
-            },
-            'gluten_content': {
-                'excellent': 30.0,
-                'good': 25.0,
-                'satisfactory': 20.0,
-                'poor': 15.0
-            },
-            'vitreousness': {
-                'excellent': 90.0,
-                'good': 80.0,
-                'satisfactory': 70.0,
-                'poor': 60.0
-            },
-            'thousand_seed_weight': {
-                'excellent': 50.0,
-                'good': 45.0,
-                'satisfactory': 40.0,
-                'poor': 35.0
-            }
-        }
+        from django.conf import settings
+        config = settings.EVALUATION_THRESHOLDS['quality']
+        
+        # Извлекаем стандарты качества и служебные параметры
+        self.quality_standards = {k: v for k, v in config.items() 
+                                  if isinstance(v, dict)}
+        self.minimum_indicators = config.get('minimum_indicators', 2)
+        self.minimum_years_tested = config.get('minimum_years_tested', 2)
     
     def calculate_quality_score(self, sort_data: Dict) -> Dict:
         """
-        Расчет балла по качеству продукции
+        Расчет балла по качеству продукции с валидацией данных
         
         Args:
             sort_data: Данные о сорте
@@ -53,11 +35,35 @@ class QualityEvaluator:
         
         if not quality_indicators:
             return {
-                'score': None,  # Явно указываем отсутствие данных
+                'score': None,
                 'interpretation': 'Данные по качеству отсутствуют',
                 'indicators': {},
                 'sufficient_data': False,
-                'data_available': False
+                'data_available': False,
+                'validation_warnings': []
+            }
+        
+        # Валидация данных
+        validation_warnings = []
+        validated_indicators = {}
+        
+        for indicator, value in quality_indicators.items():
+            if value is not None:
+                # Проверка на выбросы и разумность значений
+                validation_result = self._validate_indicator_value(indicator, value)
+                if validation_result['is_valid']:
+                    validated_indicators[indicator] = value
+                else:
+                    validation_warnings.append(validation_result['warning'])
+        
+        if not validated_indicators:
+            return {
+                'score': None,
+                'interpretation': 'Данные не прошли валидацию',
+                'indicators': {},
+                'sufficient_data': False,
+                'data_available': True,
+                'validation_warnings': validation_warnings
             }
         
         # Расчет баллов по каждому показателю
@@ -65,25 +71,35 @@ class QualityEvaluator:
         total_score = 0
         valid_indicators = 0
         
-        for indicator, value in quality_indicators.items():
-            if value is not None:
-                score = self._get_indicator_score(indicator, value)
-                indicator_scores[indicator] = {
-                    'value': value,
-                    'score': score,
-                    'interpretation': self._get_score_interpretation(score)
-                }
-                total_score += score
-                valid_indicators += 1
+        for indicator, value in validated_indicators.items():
+            score = self._get_indicator_score(indicator, value)
+            indicator_scores[indicator] = {
+                'value': value,
+                'score': score,
+                'interpretation': self._get_score_interpretation(score)
+            }
+            total_score += score
+            valid_indicators += 1
+        
+        # Проверка достаточности данных
+        years_tested = sort_data.get('overall_summary', {}).get('overall_min_years_tested', 0)
+        sufficient_data = (valid_indicators >= self.minimum_indicators and 
+                          years_tested >= self.minimum_years_tested)
         
         # Средний балл по качеству
-        avg_score = total_score / valid_indicators if valid_indicators > 0 else 3
+        if valid_indicators > 0:
+            avg_score = total_score / valid_indicators
+            score_value = round(avg_score, 1)
+        else:
+            score_value = None
         
         return {
-            'score': round(avg_score, 1),
-            'interpretation': self._get_quality_interpretation(avg_score),
+            'score': score_value,
+            'interpretation': self._get_quality_interpretation(avg_score) if score_value else 'Недостаточно данных',
             'indicators': indicator_scores,
-            'sufficient_data': valid_indicators >= 2  # Минимум 2 показателя
+            'sufficient_data': sufficient_data,
+            'data_available': True,
+            'validation_warnings': validation_warnings
         }
     
     def _extract_quality_indicators(self, sort_data: Dict) -> Dict:
@@ -113,6 +129,37 @@ class QualityEvaluator:
                 quality_indicators[indicator] = value
         
         return quality_indicators
+    
+    def _validate_indicator_value(self, indicator: str, value: float) -> Dict:
+        """
+        Валидация значения показателя качества
+        
+        Args:
+            indicator: Название показателя
+            value: Значение показателя
+            
+        Returns:
+            Dict с результатом валидации: {'is_valid': bool, 'warning': str}
+        """
+        # Проверка на отрицательные значения
+        if value < 0:
+            return {
+                'is_valid': False,
+                'warning': f'{indicator}: отрицательное значение ({value})'
+            }
+        
+        # Проверка на выбросы (значение > 200% от excellent порога)
+        if indicator in self.quality_standards:
+            excellent_threshold = self.quality_standards[indicator].get('excellent', 100)
+            max_reasonable = excellent_threshold * 2
+            
+            if value > max_reasonable:
+                return {
+                    'is_valid': False,
+                    'warning': f'{indicator}: значение ({value}) превышает разумный максимум ({max_reasonable})'
+                }
+        
+        return {'is_valid': True, 'warning': None}
     
     def _get_indicator_score(self, indicator: str, value: float) -> int:
         """
