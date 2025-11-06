@@ -322,7 +322,6 @@ class TrialViewSet(viewsets.ModelViewSet):
                 defaults={
                     'value': value,
                     'text_value': text_value,
-                    'laboratory_code': laboratory_code,
                     'analysis_date': analysis_date,
                     'created_by': request.user
                 }
@@ -764,13 +763,13 @@ class TrialViewSet(viewsets.ModelViewSet):
             trial.harvest_date = harvest_date
         
         trial.save()
-        
-        # Валидация: НСР обязателен при финальной отправке
-        if is_final and not trial.lsd_095:
-            return Response({
-                'error': 'НСР₀.₉₅ обязателен для финальной отправки формы 008. Без НСР невозможно рассчитать "Группу по стат. обработке".'
-            }, status=400)
-        
+
+        # Валидация НСР убрана по запросу - теперь можно сохранять форму 008 без НСР
+        # if is_final and not trial.lsd_095:
+        #     return Response({
+        #         'error': 'НСР₀.₉₅ обязателен для финальной отправки формы 008. Без НСР невозможно рассчитать "Группу по стат. обработке".'
+        #     }, status=400)
+
         participants_data = request.data.get('participants', [])
         if not participants_data:
             return Response({

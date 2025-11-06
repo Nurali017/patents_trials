@@ -2140,12 +2140,27 @@ class TrialParticipant(SoftDeleteModel):
                     f'Рекомендуется добавить хотя бы один стандарт (statistical_group=0) для сравнения.',
                     UserWarning
                 )
-    
+
     def save(self, *args, **kwargs):
-        """Вызываем валидацию перед сохранением"""
+        """Вызываем валидацию перед сохранением и автозаполняем maturity_group_code"""
+        # Автозаполнение maturity_group_code если не указан
+        if not self.maturity_group_code:
+            # Приоритет 1: из Application (если участник связан с заявкой)
+            if self.application and hasattr(self.application, 'maturity_group') and self.application.maturity_group:
+                mg = self.application.maturity_group
+                # Парсим формат "D03 - Название" → "D03"
+                if '-' in mg:
+                    self.maturity_group_code = mg.split('-')[0].strip()
+                else:
+                    self.maturity_group_code = mg.strip()
+
+            # Приоритет 2: из Trial (если участник связан с испытанием)
+            elif self.trial and self.trial.maturity_group_code:
+                self.maturity_group_code = self.trial.maturity_group_code
+
         self.clean()
         super().save(*args, **kwargs)
-    
+
     def __str__(self):
         group_mark = " (Стандарт)" if self.statistical_group == 0 else ""
         stat_mark = ""

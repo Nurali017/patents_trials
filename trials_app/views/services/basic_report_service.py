@@ -31,10 +31,16 @@ class BasicReportService:
             'unknown': 'Группа не указана'
         }
     
-    def generate_basic_report(self, oblast, year):
+    def generate_basic_report(self, oblast, year, patents_culture_id=None, recalculate_years=False):
         """
         Генерация основной информации и детальных данных
-        
+
+        Args:
+        - oblast: объект области
+        - year: отчетный год
+        - patents_culture_id: ID культуры из Patents для фильтрации (опционально)
+        - recalculate_years: Пересчитать years_tested по всем годам (для summary)
+
         Returns:
         - oblast: информация об области
         - year: отчетный год
@@ -44,6 +50,7 @@ class BasicReportService:
         - detailed_items: детальные данные
         - warnings: предупреждения
         - has_warnings: есть ли предупреждения
+        - culture_filter: информация о примененном фильтре (если есть)
         """
         regions = Region.objects.filter(oblast=oblast, is_deleted=False).order_by('name')
         years_range = [year-2, year-1, year]
@@ -64,150 +71,127 @@ class BasicReportService:
             if not trial_ids:
                 continue
             
-            # Найти стандартные сорта по ГРУППАМ СПЕЛОСТИ за текущий год
+            # Найти стандартные сорта по ГРУППАМ СПЕЛОСТИ И ПРЕДШЕСТВЕННИКАМ за текущий год
             current_year_trial_ids = Trial.objects.filter(
                 region=region,
                 year=year,
                 is_deleted=False
             ).values_list('id', flat=True)
-            
+
             standard_participants = TrialParticipant.objects.filter(
                 trial__id__in=current_year_trial_ids,
                 statistical_group=0,  # 0 = стандарт, 1 = испытываемый
                 is_deleted=False
-            ).select_related('sort_record')
-            
-            # Группировать стандарты по maturity_group_code
-            standards_by_group = {}
-            all_standards_by_group = {}
-            
+            ).select_related('sort_record', 'trial', 'trial__predecessor_culture')
+
+            # Группировать стандарты по (maturity_group_code, predecessor_key)
+            standards_by_group = {}  # {(group_code, predecessor_key): best_standard}
+            all_standards_by_group = {}  # {(group_code, predecessor_key): {sort_id: participant}}
+
             for participant in standard_participants:
                 group_code = participant.maturity_group_code or 'unknown'
-                
-                # Проверить что сорт в основном реестре
-                if participant.sort_record.patents_status is not None and participant.sort_record.patents_status != 1:
-                    continue
-                
-                # Собрать УНИКАЛЬНЫЕ стандарты в группе
-                if group_code not in all_standards_by_group:
-                    all_standards_by_group[group_code] = {}
-                all_standards_by_group[group_code][participant.sort_record.id] = participant.sort_record
-            
-            # Выбрать ЛУЧШИЙ стандарт в каждой группе
-            for group_code, standards_dict in all_standards_by_group.items():
-                standards_list = list(standards_dict.values())
-                
+                predecessor_key = self._get_predecessor_key(participant.trial)
+                composite_key = (group_code, predecessor_key)
+
+                # Разрешаем стандарты с любым статусом (убрана проверка patents_status)
+                # Ранее фильтровались сорта с patents_status != 1, теперь все статусы разрешены
+                # if participant.sort_record.patents_status is not None and participant.sort_record.patents_status != 1:
+                #     continue
+
+                # Собрать УНИКАЛЬНЫЕ стандарты в группе (с учетом предшественника)
+                if composite_key not in all_standards_by_group:
+                    all_standards_by_group[composite_key] = {}
+                # Сохраняем participant вместо sort_record, чтобы иметь доступ к application_id
+                all_standards_by_group[composite_key][participant.sort_record.id] = participant
+
+            # Выбрать ЛУЧШИЙ стандарт в каждой группе (group_code, predecessor_key)
+            for composite_key, standards_dict in all_standards_by_group.items():
+                group_code, predecessor_key = composite_key
+                standards_list = list(standards_dict.values())  # Список participants
+
                 if len(standards_list) == 1:
-                    standards_by_group[group_code] = standards_list[0]
+                    standards_by_group[composite_key] = standards_list[0].sort_record
                 else:
                     # Выбрать стандарт с максимальной урожайностью за текущий год
+                    # С УЧЕТОМ ПРЕДШЕСТВЕННИКА
                     best_standard = None
                     max_yield = 0
-                    
-                    for std in standards_list:
-                        std_data = self._get_trial_data_by_sort(std, region, [year], group_code)
+
+                    for participant in standards_list:
+                        std_data = self._get_trial_data_by_sort(participant.sort_record, region, [year], group_code, predecessor_key)
                         current_yield = std_data.get('current_year_yield', 0) or 0
-                        
+
                         if current_yield > max_yield:
                             max_yield = current_yield
-                            best_standard = std
-                    
-                    standards_by_group[group_code] = best_standard if best_standard else standards_list[0]
-            
-            # Добавить ВСЕ стандартные сорта в отчет
-            for group_code, standards_dict in all_standards_by_group.items():
-                standards_list = list(standards_dict.values())
-                comparison_standard = standards_by_group.get(group_code)
-                
-                for sort in standards_list:
-                    trial_data = self._get_trial_data_by_sort(sort, region, [year], group_code)
-                    is_comparison_standard = (comparison_standard and comparison_standard.id == sort.id)
-                    
-                    item = {
-                        'row_number': row_number,
-                        'region': {
-                            'id': None,
-                            'name': 'Все регионы'  # Стандарт общий для области
-                        },
-                        'sort_record': {
-                            'id': sort.id,
-                            'name': sort.name,
-                            'culture_name': sort.culture_name if hasattr(sort, 'culture_name') else None
-                        },
-                        'maturity_group_code': group_code,
-                        'maturity_group_name': self._get_maturity_group_name(group_code),
-                        'is_standard': True,
-                        'is_comparison_standard': is_comparison_standard,
-                        'application_id': None,
-                        'trial_data': trial_data,
-                        'can_make_decision': False,
-                        'standard_for_group': comparison_standard.name if comparison_standard else sort.name
-                    }
-                    
-                    detailed_items.append(item)
-                    row_number += 1
-                
-                # Предупреждение о множественных стандартах
-                if len(standards_list) > 1:
-                    standards_names = [s.name for s in standards_list]
-                    selected_standard = comparison_standard.name if comparison_standard else standards_list[0].name
-                    warning = {
-                        'type': 'multiple_standards',
-                        'severity': 'warning',
-                        'group_code': group_code,
-                        'group_name': self._get_maturity_group_name(group_code),
-                        'message': f'В группе {group_code} найдено {len(standards_list)} стандарта: {", ".join(standards_names)}. Выбран лучший (с максимальной урожайностью): {selected_standard}.',
-                        'standards': standards_names,
-                        'selected_standard': selected_standard
-                    }
-                    warnings.append(warning)
-            
+                            best_standard = participant.sort_record
+
+                    standards_by_group[composite_key] = best_standard if best_standard else standards_list[0].sort_record
+
             # Найти все сорта (включая стандарты и испытываемые)
             trial_participants = TrialParticipant.objects.filter(
                 trial__id__in=trial_ids,
                 is_deleted=False
-            ).select_related('application', 'sort_record')
-            
-            # Группировать участников по заявкам с группой спелости
+            ).select_related('application', 'sort_record', 'trial', 'trial__predecessor_culture')
+
+            # Группировать участников по заявкам с группой спелости И ПРЕДШЕСТВЕННИКОМ
             apps_with_groups = {}
             standards_with_groups = {}
-            
+
             for participant in trial_participants:
                 group_code = participant.maturity_group_code or 'unknown'
-                
+                predecessor_key = self._get_predecessor_key(participant.trial)
+
+                # ИСПРАВЛЕНО: Сначала проверяем наличие application
+                # Если есть application, добавляем как испытываемый сорт (даже если statistical_group=0)
                 if participant.application:
-                    # Испытываемые сорта
-                    app_id = participant.application.id
-                    if app_id not in apps_with_groups:
-                        apps_with_groups[app_id] = {
+                    # Испытываемые сорта (включая стандарты с заявкой)
+                    # КЛЮЧ: (app_id, maturity_group, predecessor)
+                    composite_key = (participant.application.id, group_code, predecessor_key)
+                    if composite_key not in apps_with_groups:
+                        apps_with_groups[composite_key] = {
                             'application': participant.application,
-                            'maturity_group_code': group_code
+                            'maturity_group_code': group_code,
+                            'predecessor_key': predecessor_key,
+                            'predecessor_display': self._get_predecessor_display(participant.trial),
+                            'trial': participant.trial
                         }
-                else:
-                    # Стандарты
-                    sort_id = participant.sort_record.id
-                    if sort_id not in standards_with_groups:
-                        standards_with_groups[sort_id] = {
+                elif participant.statistical_group == 0:
+                    # Стандарты БЕЗ заявки (только те, у кого нет application)
+                    # КЛЮЧ: (sort_id, maturity_group, predecessor)
+                    composite_key = (participant.sort_record.id, group_code, predecessor_key)
+                    if composite_key not in standards_with_groups:
+                        standards_with_groups[composite_key] = {
                             'sort_record': participant.sort_record,
                             'maturity_group_code': group_code,
-                            'statistical_group': participant.statistical_group
+                            'statistical_group': participant.statistical_group,
+                            'predecessor_key': predecessor_key,
+                            'predecessor_display': self._get_predecessor_display(participant.trial),
+                            'trial': participant.trial
                         }
             
             # Добавить испытываемые сорта
             for app_data in apps_with_groups.values():
                 app = app_data['application']
                 group_code = app_data['maturity_group_code']
-                
-                trial_data = self._get_trial_data_by_application(app, region, years_range, group_code)
-                
+                predecessor_key = app_data['predecessor_key']
+                predecessor_display = app_data['predecessor_display']
+
+                # Получить данные по КОНКРЕТНОМУ предшественнику
+                trial_data = self._get_trial_data_by_application(
+                    app, region, years_range, group_code, predecessor_key, recalculate_years
+                )
+
                 # Вычислить отклонение от стандарта только за отчетный год
-                region_standard = standards_by_group.get(group_code)
+                # С УЧЕТОМ ПРЕДШЕСТВЕННИКА
+                composite_key = (group_code, predecessor_key)
+                region_standard = standards_by_group.get(composite_key)
                 if region_standard and trial_data.get('current_year_yield'):
                     # Получить данные стандарта только за отчетный год
+                    # С ТЕМ ЖЕ ПРЕДШЕСТВЕННИКОМ
                     standard_data = self._get_trial_data_by_sort(
-                        region_standard, region, [year], group_code
+                        region_standard, region, [year], group_code, predecessor_key
                     )
-                    
+
                     if standard_data.get('current_year_yield'):
                         deviation = trial_data['current_year_yield'] - standard_data['current_year_yield']
                         deviation_percent = (deviation / standard_data['current_year_yield']) * 100
@@ -239,10 +223,13 @@ class BasicReportService:
                     'sort_record': {
                         'id': app.sort_record.id,
                         'name': app.sort_record.name,
-                        'culture_name': app.sort_record.culture_name if hasattr(app.sort_record, 'culture_name') else None
+                        'culture_name': app.sort_record.culture.name if app.sort_record.culture else None,
+                        'culture_id': app.sort_record.culture.culture_id if app.sort_record.culture else None
                     },
                     'maturity_group_code': group_code,
                     'maturity_group_name': self._get_maturity_group_name(group_code),
+                    'predecessor': predecessor_display,
+                    'predecessor_key': predecessor_key,
                     'is_standard': False,
                     'application_id': app.id,
                     'application_number': app.application_number,
@@ -266,9 +253,14 @@ class BasicReportService:
                 sort_record = std_data['sort_record']
                 group_code = std_data['maturity_group_code']
                 statistical_group = std_data['statistical_group']
-                
-                trial_data = self._get_trial_data_by_sort(sort_record, region, years_range, group_code)
-                
+                predecessor_key = std_data['predecessor_key']
+                predecessor_display = std_data['predecessor_display']
+
+                # Получить данные с учетом предшественника
+                trial_data = self._get_trial_data_by_sort(
+                    sort_record, region, years_range, group_code, predecessor_key
+                )
+
                 item = {
                     'row_number': row_number,
                     'region': {
@@ -283,10 +275,13 @@ class BasicReportService:
                     'sort_record': {
                         'id': sort_record.id,
                         'name': sort_record.name,
-                        'culture_name': sort_record.culture_name
+                        'culture_name': sort_record.culture.name if sort_record.culture else None,
+                        'culture_id': sort_record.culture.culture_id if sort_record.culture else None
                     },
                     'maturity_group_code': group_code,
                     'maturity_group_name': self._get_maturity_group_name(group_code),
+                    'predecessor': predecessor_display,
+                    'predecessor_key': predecessor_key,
                     'is_standard': True,
                     'is_comparison_standard': (statistical_group == 0),
                     'application_id': None,
@@ -300,8 +295,33 @@ class BasicReportService:
                 
                 detailed_items.append(item)
                 row_number += 1
-        
-        return {
+
+        # Фильтрация по культуре (если указан patents_culture_id)
+        culture_filter_info = None
+        if patents_culture_id is not None:
+            filtered_items = []
+            for item in detailed_items:
+                # Проверяем culture_id через sort_record или culture
+                if (item.get('sort_record', {}).get('culture_id') == patents_culture_id or
+                    item.get('culture', {}).get('culture_id') == patents_culture_id):
+                    filtered_items.append(item)
+            detailed_items = filtered_items
+
+            # Получить название культуры для информации о фильтре
+            from ...models import Culture
+            try:
+                culture = Culture.objects.get(culture_id=patents_culture_id, is_deleted=False)
+                culture_filter_info = {
+                    'patents_culture_id': patents_culture_id,
+                    'culture_name': culture.name
+                }
+            except Culture.DoesNotExist:
+                culture_filter_info = {
+                    'patents_culture_id': patents_culture_id,
+                    'culture_name': f'Culture ID {patents_culture_id}'
+                }
+
+        result = {
             'oblast': {
                 'id': oblast.id,
                 'name': oblast.name
@@ -314,11 +334,29 @@ class BasicReportService:
             'warnings': warnings,
             'has_warnings': len(warnings) > 0
         }
+
+        # Добавляем информацию о фильтре, если он применен
+        if culture_filter_info:
+            result['culture_filter'] = culture_filter_info
+
+        return result
     
-    def _get_trial_data_by_sort(self, sort_record, region, years, maturity_group_code=None):
-        """Получить данные испытаний для сорта-стандарта в регионе"""
+    def _get_trial_data_by_sort(self, sort_record, region, years, maturity_group_code=None, predecessor_key=None):
+        """
+        Получить данные испытаний для сорта-стандарта в регионе
+
+        Args:
+            sort_record: Запись сорта
+            region: Регион
+            years: Список годов
+            maturity_group_code: Код группы спелости (опционально)
+            predecessor_key: Ключ предшественника для фильтрации (опционально)
+
+        Returns:
+            Словарь с данными урожайности
+        """
         yields_by_year = {}
-        
+
         for y in years:
             filters = {
                 'sort_record': sort_record,
@@ -327,11 +365,21 @@ class BasicReportService:
                 'statistical_group': 0,  # Стандарты
                 'is_deleted': False
             }
-            
+
             if maturity_group_code:
                 filters['maturity_group_code'] = maturity_group_code
-            
-            trial_ids = TrialParticipant.objects.filter(**filters).values_list('trial_id', flat=True)
+
+            # Получить участников
+            participants = TrialParticipant.objects.filter(**filters).select_related('trial', 'trial__predecessor_culture')
+
+            # Фильтровать по предшественнику, если указан
+            trial_ids = []
+            if predecessor_key:
+                for participant in participants:
+                    if self._get_predecessor_key(participant.trial) == predecessor_key:
+                        trial_ids.append(participant.trial_id)
+            else:
+                trial_ids = list(participants.values_list('trial_id', flat=True))
             
             trials = Trial.objects.filter(
                 id__in=trial_ids,
@@ -370,11 +418,24 @@ class BasicReportService:
             'current_year_yield': current_year_yield,
             'has_data': len(yields_by_year) > 0
         }
-    
-    def _get_trial_data_by_application(self, application, region, years, maturity_group_code=None):
-        """Получить данные испытаний для заявки в регионе"""
+
+    def _get_trial_data_by_application(self, application, region, years, maturity_group_code=None, predecessor_key=None, recalculate_years=False):
+        """
+        Получить данные испытаний для заявки в регионе
+
+        Args:
+            application: Заявка
+            region: Регион
+            years: Список годов
+            maturity_group_code: Код группы спелости (опционально)
+            predecessor_key: Ключ предшественника для фильтрации (опционально)
+            recalculate_years: Если True, игнорировать фильтр по предшественнику
+
+        Returns:
+            Словарь с данными урожайности
+        """
         yields_by_year = {}
-        
+
         for y in years:
             filters = {
                 'application': application,
@@ -383,11 +444,22 @@ class BasicReportService:
                 'trial__year': y,
                 'is_deleted': False
             }
-            
+
             if maturity_group_code:
                 filters['maturity_group_code'] = maturity_group_code
-            
-            trial_ids = TrialParticipant.objects.filter(**filters).values_list('trial_id', flat=True)
+
+            # Получить участников
+            participants = TrialParticipant.objects.filter(**filters).select_related('trial', 'trial__predecessor_culture')
+
+            # Фильтровать по предшественнику, если указан
+            # НО: если recalculate_years=True, игнорируем фильтр по предшественнику
+            trial_ids = []
+            if predecessor_key and not recalculate_years:
+                for participant in participants:
+                    if self._get_predecessor_key(participant.trial) == predecessor_key:
+                        trial_ids.append(participant.trial_id)
+            else:
+                trial_ids = list(participants.values_list('trial_id', flat=True))
             
             if trial_ids:
                 yield_results = TrialResult.objects.filter(
@@ -404,14 +476,14 @@ class BasicReportService:
                     
                     if avg_yield:
                         yields_by_year[y] = round(float(avg_yield), 1)
-        
+
         average_yield = None
         if yields_by_year:
             average_yield = round(sum(yields_by_year.values()) / len(yields_by_year), 1)
-        
+
         current_year = max(years) if years else None
         current_year_yield = yields_by_year.get(current_year) if current_year else None
-        
+
         return {
             'years_tested': len(yields_by_year),
             'year_started': min(yields_by_year.keys()) if yields_by_year else None,
@@ -504,3 +576,43 @@ class BasicReportService:
     def _get_maturity_group_name(self, group_code):
         """Получить название группы спелости по коду"""
         return self.maturity_groups.get(group_code, f'Группа {group_code}')
+
+    def _get_predecessor_key(self, trial):
+        """
+        Получить ключ предшественника для группировки с нормализацией
+
+        Args:
+            trial: Объект испытания
+
+        Returns:
+            Строка-ключ предшественника (culture_name или predecessor_code)
+        """
+        if trial.predecessor_culture:
+            return f"culture_{trial.predecessor_culture.id}"
+        elif trial.predecessor_code:
+            # Пытаемся найти культуру по названию для нормализации
+            from trials_app.models import Culture
+            culture = Culture.objects.filter(
+                name__iexact=trial.predecessor_code.strip(),
+                is_deleted=False
+            ).first()
+            if culture:
+                return f"culture_{culture.id}"
+            return f"code_{trial.predecessor_code}"
+        return "unknown"
+
+    def _get_predecessor_display(self, trial):
+        """
+        Получить отображаемое название предшественника
+
+        Args:
+            trial: Объект испытания
+
+        Returns:
+            Название предшественника для отображения
+        """
+        if trial.predecessor_culture:
+            return trial.predecessor_culture.name
+        elif trial.predecessor_code:
+            return trial.predecessor_code
+        return "Не указан"
