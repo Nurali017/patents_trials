@@ -253,36 +253,54 @@ class AlertService:
         sort_name = sort_record.get('name', 'Неизвестный сорт')
 
         if patents_status == 1:
-            # Позитивное сообщение - сорт в основном реестре
+            # Статус MAIN (Основной реестр) - всё ОК, нет violations
+            pass
+        elif patents_status == 2:
+            # Статус TESTING - предупреждение
             violations.append({
-                'code': 'VALID_PATENTS_STATUS',
-                'severity': 'info',
-                'message': 'Сорт находится в основном реестре ООС',
+                'code': 'TESTING_PATENTS_STATUS',
+                'severity': 'warning',
+                'message': 'Сорт находится на стадии испытаний (TESTING)',
                 'details': {
                     'sort_name': sort_name,
                     'current_status': patents_status,
-                    'status_display': 'MAIN (Основной реестр)'
+                    'status_display': 'TESTING (Испытания)'
+                }
+            })
+        elif patents_status == 3:
+            # Статус ARCHIVE - предупреждение
+            violations.append({
+                'code': 'ARCHIVE_PATENTS_STATUS',
+                'severity': 'warning',
+                'message': 'Сорт находится в архиве (ARCHIVE)',
+                'details': {
+                    'sort_name': sort_name,
+                    'current_status': patents_status,
+                    'status_display': 'ARCHIVE (Архив)'
+                }
+            })
+        elif patents_status is None:
+            # Статус не определен - предупреждение
+            violations.append({
+                'code': 'UNKNOWN_PATENTS_STATUS',
+                'severity': 'warning',
+                'message': 'Статус сорта в реестре ООС не определен',
+                'details': {
+                    'sort_name': sort_name,
+                    'current_status': None,
+                    'status_display': 'Не определен'
                 }
             })
         else:
-            # Предупреждение - сорт НЕ в основном реестре
-            status_names = {
-                1: 'MAIN (Основной реестр)',
-                2: 'TESTING (Испытания)',
-                3: 'ARCHIVE (Архив)',
-                None: 'Не определен'
-            }
-            current_status = status_names.get(patents_status, f'Неизвестный статус ({patents_status})')
-
+            # Неизвестный статус - предупреждение
             violations.append({
                 'code': 'INVALID_PATENTS_STATUS',
                 'severity': 'warning',
-                'message': f'Сорт не находится в основном реестре ООС. Текущий статус: {current_status}',
+                'message': f'Неизвестный статус сорта в реестре ООС: {patents_status}',
                 'details': {
                     'sort_name': sort_name,
                     'current_status': patents_status,
-                    'required_status': 1,
-                    'status_display': current_status
+                    'status_display': f'Неизвестный статус ({patents_status})'
                 }
             })
 
