@@ -5,5 +5,12 @@ from .ball_scorer import BallScorer
 from .quality_evaluator import QualityEvaluator
 from .resistance_checker import ResistanceChecker
 from .alert_service import AlertService
+from .commission_recommendation_service import CommissionRecommendationService
 
-__all__ = ['BallScorer', 'QualityEvaluator', 'ResistanceChecker', 'AlertService']
+__all__ = [
+    'BallScorer',
+    'QualityEvaluator',
+    'ResistanceChecker',
+    'AlertService',
+    'CommissionRecommendationService'
+]

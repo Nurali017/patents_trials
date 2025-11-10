@@ -260,7 +260,13 @@ class GroupCulture(SoftDeleteModel):
         null=True,
         help_text="Код группы"
     )
-    
+    regions = models.ManyToManyField(
+        'Region',
+        blank=True,
+        related_name='group_cultures',
+        help_text="Регионы (ГСУ), в которых испытывается данная группа культур"
+    )
+
     # Метаданные
     synced_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)

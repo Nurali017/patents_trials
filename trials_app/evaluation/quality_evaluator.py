@@ -70,14 +70,11 @@ class QualityEvaluator:
         indicator_scores = {}
         total_score = 0
         valid_indicators = 0
-        
+
         for indicator, value in validated_indicators.items():
             score = self._get_indicator_score(indicator, value)
-            indicator_scores[indicator] = {
-                'value': value,
-                'score': score,
-                'interpretation': self._get_score_interpretation(score)
-            }
+            # Упрощенная структура: только значение
+            indicator_scores[indicator] = value
             total_score += score
             valid_indicators += 1
         
@@ -105,29 +102,39 @@ class QualityEvaluator:
     def _extract_quality_indicators(self, sort_data: Dict) -> Dict:
         """
         Извлечение показателей качества из данных сорта
-        
+
         Args:
             sort_data: Данные о сорте
-            
+
         Returns:
             Словарь показателей качества
         """
         quality_indicators = {}
-        
-        # Ищем показатели качества в регионах
+
+        # Ищем показатели качества в регионах и усредняем
         regions_data = sort_data.get('regions_data', [])
+        indicator_values = {}  # Словарь для накопления значений по показателям
+
         for region in regions_data:
             region_quality = region.get('quality_indicators', {})
             for indicator, value in region_quality.items():
-                if value is not None and indicator not in quality_indicators:
-                    quality_indicators[indicator] = value
-        
+                if value is not None:
+                    if indicator not in indicator_values:
+                        indicator_values[indicator] = []
+                    indicator_values[indicator].append(value)
+
+        # Вычисляем средние значения
+        for indicator, values in indicator_values.items():
+            if values:
+                avg_value = sum(values) / len(values)
+                quality_indicators[indicator] = round(avg_value, 1)
+
         # Ищем в общих данных сорта
         summary_quality = sort_data.get('summary', {}).get('quality_indicators', {})
         for indicator, value in summary_quality.items():
             if value is not None and indicator not in quality_indicators:
                 quality_indicators[indicator] = value
-        
+
         return quality_indicators
     
     def _validate_indicator_value(self, indicator: str, value: float) -> Dict:

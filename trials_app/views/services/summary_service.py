@@ -1,8 +1,8 @@
 """
 Сервис для сводных данных годового отчета
 """
-from ...models import Region
-from ...evaluation import BallScorer, AlertService
+from ...models import Region, GroupCulture, Culture
+from ...evaluation import BallScorer, AlertService, CommissionRecommendationService
 
 
 class SummaryService:
@@ -19,6 +19,7 @@ class SummaryService:
     def __init__(self):
         self.ball_scorer = BallScorer()
         self.alert_service = AlertService()
+        self.commission_service = CommissionRecommendationService()
 
     def generate_summary_items(self, oblast, year, detailed_items):
         """
@@ -34,7 +35,6 @@ class SummaryService:
         """
         # НОВАЯ СТРУКТУРА: Группировать БЕЗ predecessor_key в ключе
         sorts_data = {}
-        total_regions = Region.objects.filter(oblast=oblast, is_deleted=False).count()
 
         for item in detailed_items:
             app_id = item.get('application_id')
@@ -86,6 +86,44 @@ class SummaryService:
         summary_items = []
 
         for composite_key, data in sorts_data.items():
+            # Получаем total_regions для конкретной группы культуры
+            # Путь: sort_record -> culture -> group_culture -> regions
+            sort_record = data.get('sort_record')
+
+            # По умолчанию - все регионы области
+            total_regions = Region.objects.filter(oblast=oblast, is_deleted=False).count()
+
+            # Получаем группу культуры через сорт
+            if sort_record:
+                # sort_record может быть объектом модели или словарем из сериализатора
+                if hasattr(sort_record, 'culture'):
+                    # Это объект модели
+                    culture = sort_record.culture
+                elif isinstance(sort_record, dict) and 'culture' in sort_record:
+                    # Это словарь, получаем culture_id
+                    culture_data = sort_record['culture']
+                    culture_id = culture_data.get('id') if isinstance(culture_data, dict) else culture_data
+
+                    try:
+                        culture = Culture.objects.select_related('group_culture').get(
+                            id=culture_id,
+                            is_deleted=False
+                        )
+                    except (Culture.DoesNotExist, TypeError):
+                        culture = None
+                else:
+                    culture = None
+
+                # Получаем регионы из группы культуры
+                if culture and culture.group_culture:
+                    group_regions_count = culture.group_culture.regions.filter(
+                        oblast=oblast,
+                        is_deleted=False
+                    ).count()
+
+                    if group_regions_count > 0:
+                        total_regions = group_regions_count
+
             # ИЗМЕНЕНИЕ №3: Рассчитать overall_summary по всем предшественникам
             overall_summary = self._calculate_overall_summary(data['trials_by_predecessor'], total_regions)
 
@@ -124,6 +162,14 @@ class SummaryService:
                 evaluation_scores, full_summary, data['sort_record']
             )
 
+            # Генерация решения комиссии с обоснованием
+            commission_recommendation = self.commission_service.generate_recommendation(
+                evaluation_scores=evaluation_scores,
+                violations=violations,
+                overall_summary=full_summary,
+                sort_record=data['sort_record']
+            )
+
             summary_items.append({
                 'application_id': data['application_id'],
                 'application_number': data['application_number'],
@@ -151,6 +197,9 @@ class SummaryService:
 
                 # Нарушения (заменяет recommendation)
                 'violations': violations,
+
+                # Решение комиссии с обоснованием
+                'commission_recommendation': commission_recommendation,
 
                 'decision_status': data['decision_status'],
                 'latest_decision': data['latest_decision']

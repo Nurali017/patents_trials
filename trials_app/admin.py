@@ -105,8 +105,9 @@ class TrialTypeAdmin(admin.ModelAdmin):
 class GroupCultureAdmin(admin.ModelAdmin):
     list_display = ['name', 'code', 'group_culture_id', 'synced_at', 'created_at', 'is_deleted']
     search_fields = ['name', 'description', 'code']
-    list_filter = ['created_at', 'synced_at', 'is_deleted']
+    list_filter = ['created_at', 'synced_at', 'is_deleted', 'regions']
     readonly_fields = ['group_culture_id', 'synced_at']
+    filter_horizontal = ['regions']
 
 
 @admin.register(Culture)

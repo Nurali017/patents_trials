@@ -83,7 +83,7 @@ REST_FRAMEWORK = {
         'rest_framework.renderers.JSONRenderer',
     ),
     'DEFAULT_PAGINATION_CLASS': 'rest_framework.pagination.PageNumberPagination',
-    'PAGE_SIZE': 20,
+    'PAGE_SIZE': 1000,
     'DEFAULT_AUTHENTICATION_CLASSES': [
         'rest_framework.authentication.TokenAuthentication',
         'rest_framework.authentication.SessionAuthentication',  # Для Swagger
@@ -191,13 +191,6 @@ EVALUATION_THRESHOLDS = {
         'minimum_years_tested': 2,
     },
     'resistance': {
-        'disease_resistance': {
-            'excellent': 5.0,
-            'good': 4.0,
-            'satisfactory': 3.0,
-            'poor': 2.0,
-            'critical': 3.0
-        },
         'lodging_resistance': {
             'excellent': 5.0,
             'good': 4.0,
@@ -232,7 +225,7 @@ EVALUATION_THRESHOLDS = {
         },
         'minimum_indicators': 2,
         'minimum_years_tested': 2,
-        'critical_indicators': ['disease_resistance', 'lodging_resistance', 'winter_hardiness']
+        'critical_indicators': ['lodging_resistance', 'winter_hardiness']
     },
     'yield': {
         'deviation_significant_positive': 5.0,

@@ -49,18 +49,15 @@ class ResistanceChecker:
         total_score = 0
         valid_indicators = 0
         critical_failures = []
-        
+
         for indicator, value in resistance_indicators.items():
             if value is not None:
                 score = self._get_resistance_score(indicator, value)
-                indicator_scores[indicator] = {
-                    'value': value,
-                    'score': score,
-                    'interpretation': self._get_resistance_interpretation(score)
-                }
+                # Упрощенная структура: только значение
+                indicator_scores[indicator] = value
                 total_score += score
                 valid_indicators += 1
-                
+
                 # Проверка критических показателей
                 if indicator in self.critical_indicators:
                     critical_threshold = self.resistance_standards[indicator].get('critical', 3.0)

@@ -166,6 +166,8 @@ class RegionSerializer(serializers.ModelSerializer):
         fields = '__all__'
 
 class GroupCultureSerializer(serializers.ModelSerializer):
+    regions_data = RegionSerializer(source='regions', many=True, read_only=True)
+
     class Meta:
         model = GroupCulture
         fields = '__all__'
