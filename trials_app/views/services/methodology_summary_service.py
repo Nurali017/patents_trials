@@ -45,8 +45,12 @@ class MethodologySummaryService:
                     }
                 }
             }
+
+        Note:
+            Перед формированием рекомендаций автоматически синхронизируются
+            статусы всех сортов (patents_status) из Patents Service
         """
-        # Получаем данные напрямую из БД
+        # Получаем данные напрямую из БД (с автоматической синхронизацией статусов)
         years_range = [year - 2, year - 1, year]
         detailed_items = self._get_trial_data_for_summary(oblast, years_range, year, patents_culture_id)
 
@@ -84,6 +88,9 @@ class MethodologySummaryService:
         Для каждого сорта собирает ВСЕ данные по всем регионам и предшественникам
         ВАЖНО: Собирает данные по sort_record, даже если раньше не было application
 
+        СИНХРОНИЗАЦИЯ: Перед сбором данных автоматически обновляет patents_status
+        всех сортов из Patents Service для актуальности информации
+
         Args:
             oblast: Объект области
             years_range: Список лет для анализа
@@ -111,6 +118,20 @@ class MethodologySummaryService:
             applications = applications.filter(
                 sort_record__culture__culture_id=patents_culture_id
             )
+
+        # ВАЖНО: Синхронизировать статусы сортов из Patents перед формированием summary
+        unique_sort_records = set()
+        for app in applications:
+            unique_sort_records.add(app.sort_record)
+
+        # Обновить patents_status для всех сортов
+        for sort_record in unique_sort_records:
+            try:
+                # Синхронизация только основных данных (без оригинаторов для скорости)
+                sort_record.sync_from_patents(sync_originators=False)
+            except Exception as e:
+                # Логируем ошибку, но продолжаем работу
+                print(f"Ошибка синхронизации сорта {sort_record.name} (ID: {sort_record.id}): {e}")
 
         # Шаг 2: Для каждой заявки собрать ВСЕ данные по sort_record (даже без application)
         all_participants = []
