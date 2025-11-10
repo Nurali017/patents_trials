@@ -292,7 +292,15 @@ class MethodologySummaryService:
                 'sort_record': {
                     'id': application.sort_record.id,
                     'name': application.sort_record.name,
-                    'patents_status': application.sort_record.patents_status
+                    'patents_status': application.sort_record.patents_status,
+                    'culture': ({
+                        'id': application.sort_record.culture.id,
+                        'name': application.sort_record.culture.name,
+                        'group_culture': ({
+                            'id': application.sort_record.culture.group_culture.id,
+                            'code': application.sort_record.culture.group_culture.code
+                        } if application.sort_record.culture.group_culture else None)
+                    } if application.sort_record.culture else None)
                 },
                 'maturity_group_code': data['maturity_group_code'],
                 'maturity_group_name': self._get_maturity_group_name(data['maturity_group_code']),
@@ -418,10 +426,12 @@ class MethodologySummaryService:
                     'sort_record': {
                         'id': item['sort_record']['id'],
                         'name': item['sort_record']['name'],
-                        'patents_status': item['sort_record'].get('patents_status')
+                        'patents_status': item['sort_record'].get('patents_status'),
+                        'culture': item['sort_record'].get('culture')
                     },
                     'evaluation_scores': item.get('evaluation_scores', {}),
                     'violations': item.get('violations', []),  # Заменяет recommendation
+                    'commission_recommendation': item.get('commission_recommendation', {}),  # Решение комиссии с обоснованием
                     'summary': item.get('overall_summary', {}),
                     'decision_status': item.get('decision_status'),
                     'latest_decision': item.get('latest_decision')
@@ -494,9 +504,12 @@ class MethodologySummaryService:
         from ...models import TrialResult, TrialParticipant, Indicator
         
         # Найти показатели устойчивости
+        # ИСКЛЮЧАЕМ показатели болезней из расчета
         resistance_indicators = Indicator.objects.filter(
             name__icontains='устойчивость',
             is_deleted=False
+        ).exclude(
+            name__icontains='болезням и вредителям'
         )
         
         # Собираем все результаты за весь период
