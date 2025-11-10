@@ -78,23 +78,31 @@ class BallScorer:
         
         # Анализируем статистическую значимость
         significant_regions = 0
-        total_deviation = 0
         total_regions = len(regions_data)
-        
+
+        # Для средневзвешенного по урожайности стандарта
+        weighted_sum = 0
+        total_weight = 0
+
         # Собираем детали по регионам
         regions_breakdown = []
-        
+
         for region in regions_data:
             if region.get('statistical_significance', False):
                 significant_regions += 1
-            
-            deviation = region.get('deviation_from_standard', 0) or region.get('deviation_percent', 0)
-            total_deviation += deviation
-            
+
+            # Вычисляем средневзвешенное по урожайности стандарта
+            standard_yield = region.get('standard_current_year_yield', 0)
+            deviation_percent = region.get('deviation_percent', 0)
+
+            if standard_yield and standard_yield > 0:
+                weighted_sum += deviation_percent * standard_yield
+                total_weight += standard_yield
+
             # Добавляем полные данные региона
             region_info = region.get('region', {})
             climate_zone = region_info.get('climate_zone')
-            
+
             regions_breakdown.append({
                 'region_id': region.get('region_id'),
                 'region_name': region.get('region_name'),
@@ -108,14 +116,15 @@ class BallScorer:
                 'years_tested': region.get('years_tested', 0),
                 'current_year_yield': region.get('current_year_yield'),
                 'deviation_from_standard': region.get('deviation_from_standard'),
-                'deviation_percent': region.get('deviation_percent'),
+                'deviation_percent': deviation_percent,
                 'standard_name': region.get('standard_name'),
-                'standard_current_year_yield': region.get('standard_current_year_yield'),
+                'standard_current_year_yield': standard_yield,
                 'statistical_significance': region.get('statistical_significance', False),
                 'predecessor': region.get('predecessor', 'Неизвестно')
             })
-        
-        avg_deviation = total_deviation / total_regions if total_regions > 0 else 0
+
+        # Средневзвешенное процентное отклонение (по урожайности стандарта)
+        avg_deviation = weighted_sum / total_weight if total_weight > 0 else 0
         significance_percent = (significant_regions / total_regions * 100) if total_regions > 0 else 0
         
         # Используем конфигурируемые пороги
@@ -125,26 +134,29 @@ class BallScorer:
         dev_mod_neg = config['deviation_moderate_negative']
         dev_sig_neg = config['deviation_significant_negative']
         
-        # Определение балла по урожайности
+        # Определение балла по урожайности (согласно методике)
         if avg_deviation > 0:
             # Сорт превышает стандарт
             if significance_percent >= 75:
                 score = 5
-                interpretation = "Значительно превышает стандарт (статистически значимо)"
+                interpretation = "Значительно превышает стандарт (статистически значимо в большинстве регионов)"
             elif significance_percent >= sig_threshold:
                 score = 4
                 interpretation = "Статистически значимо превышает стандарт"
             else:
-                # Превышает, но без статистической значимости
+                # Превышает, но без статистической значимости - применяем пороги методики
                 if avg_deviation >= dev_sig_pos:
-                    score = 4
-                    interpretation = "Значительно превышает стандарт (требует подтверждения)"
+                    # ≥8% → допуск к реестру (методика)
+                    score = 5
+                    interpretation = "Значительно превышает стандарт (≥8%) - рекомендуется к допуску"
                 elif avg_deviation >= dev_mod_pos:
-                    score = 3
-                    interpretation = "Превышает стандарт (требует подтверждения)"
+                    # 3-8% → требуется анализ качества и устойчивости (методика)
+                    score = 4
+                    interpretation = "Превышает стандарт (3-8%) - требуется анализ качества и устойчивости"
                 else:
+                    # 0-3% → незначительное превышение
                     score = 3
-                    interpretation = "Незначительно превышает стандарт"
+                    interpretation = "Незначительно превышает стандарт (<3%)"
         elif avg_deviation < 0:
             # Сорт уступает стандарту
             if significance_percent >= sig_threshold:
@@ -152,18 +164,21 @@ class BallScorer:
                 interpretation = "Статистически значимо уступает стандарту"
             else:
                 if avg_deviation <= dev_sig_neg:
-                    score = 2
-                    interpretation = "Значительно уступает стандарту"
+                    # ≤-8% → значительно уступает
+                    score = 1
+                    interpretation = "Значительно уступает стандарту (≤-8%) - рекомендуется к снятию"
                 elif avg_deviation <= dev_mod_neg:
+                    # -3% до -8% → уступает
                     score = 2
-                    interpretation = "Уступает стандарту"
+                    interpretation = "Уступает стандарту (-3% до -8%)"
                 else:
+                    # 0 до -3% → незначительно уступает
                     score = 3
-                    interpretation = "Незначительно уступает стандарту"
+                    interpretation = "Незначительно уступает стандарту (0 до -3%)"
         else:
             # avg_deviation == 0 или очень близко к 0
             score = 3
-            interpretation = "Не отличается от стандарта"
+            interpretation = "На уровне стандарта - анализ других признаков"
         
         # Подсчет регионов по отклонениям от стандарта
         regions_exceeding = sum(1 for r in regions_breakdown if r.get('deviation_percent', 0) > 0)

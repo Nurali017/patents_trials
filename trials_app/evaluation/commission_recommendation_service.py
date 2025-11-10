@@ -53,6 +53,19 @@ class CommissionRecommendationService:
         regions_neutral = yield_details.get('regions_neutral', 0)
         regions_breakdown = yield_details.get('regions_breakdown', [])
 
+        # Вычисляем средневзвешенное процентное отклонение по урожайности стандарта
+        avg_deviation_percent = 0.0
+        if regions_breakdown:
+            total_weight = 0
+            weighted_sum = 0
+            for region in regions_breakdown:
+                standard_yield = region.get('standard_current_year_yield', 0)
+                deviation_percent = region.get('deviation_percent', 0)
+                if standard_yield and standard_yield > 0:
+                    weighted_sum += deviation_percent * standard_yield
+                    total_weight += standard_yield
+            avg_deviation_percent = weighted_sum / total_weight if total_weight > 0 else 0
+
         # Используем gsu_total из overall_summary (общее количество ГСУ для группы культуры)
         total_regions = overall_summary.get('gsu_total', len(regions_breakdown))
 
@@ -108,7 +121,8 @@ class CommissionRecommendationService:
             years_tested=years_tested,
             coverage_percent=coverage_percent,
             regions_exceeding=regions_exceeding,
-            total_regions=total_regions
+            total_regions=total_regions,
+            violations=violations
         )
 
         # Извлечение факторов риска
@@ -129,7 +143,8 @@ class CommissionRecommendationService:
                 'exceeding': regions_exceeding,
                 'below': regions_below,
                 'neutral': regions_neutral,
-                'total': total_regions
+                'total': total_regions,
+                'avg_deviation_percent': round(avg_deviation_percent, 1)
             },
             'risk_factors': risk_factors
         }
@@ -143,13 +158,18 @@ class CommissionRecommendationService:
         has_critical_violations: bool
     ) -> str:
         """
-        Определение категории решения
+        Определение категории решения (согласно методике)
 
         PROPOSE_TO_REGISTRY:
-        - yield_score >= 4
-        - regions_exceeding >= 50%
-        - years_tested >= 3
-        - нет critical violations
+        1. Значительное превышение (методика):
+           - yield_score >= 5 (≥8% превышение)
+           - regions_exceeding >= 50%
+           - нет critical violations
+        2. Стандартные критерии:
+           - yield_score >= 4 (3-8% превышение)
+           - regions_exceeding >= 50%
+           - years_tested >= 3
+           - нет critical violations
 
         PROPOSE_TO_REMOVE:
         - yield_score <= 2
@@ -175,6 +195,12 @@ class CommissionRecommendationService:
         # Критерии для РЕЕСТРА
         exceeding_percent = (regions_exceeding / total_regions * 100) if total_regions > 0 else 0
 
+        # По методике: ≥8% превышение → допуск к реестру (приоритет над длительностью)
+        if (yield_score >= 5.0 and exceeding_percent >= 50):
+            # Значительное превышение (≥8%) в большинстве регионов
+            return 'PROPOSE_TO_REGISTRY'
+
+        # Стандартные критерии для реестра (требуют 3 года испытаний)
         if (yield_score >= 4.0 and
             exceeding_percent >= 50 and
             years_tested >= 3):
@@ -537,39 +563,60 @@ class CommissionRecommendationService:
             # Нейтральные результаты
             text = f"Сорт {sort_name} показывает результаты на уровне стандарта {standard_name}. "
 
-        # Добавляем примеры регионов с разными результатами
+        # Вычисляем средневзвешенное процентное отклонение по урожайности стандарта
         if regions_breakdown:
-            # Выбираем один лучший и один худший регион для демонстрации противоречивости
-            sorted_regions = sorted(regions_breakdown, key=lambda r: r.get('deviation_percent', 0), reverse=True)
-            best_region = sorted_regions[0] if sorted_regions else None
-            worst_region = sorted_regions[-1] if len(sorted_regions) > 1 else None
+            total_weight = 0
+            weighted_sum = 0
+            for region in regions_breakdown:
+                standard_yield = region.get('standard_current_year_yield', 0)
+                deviation_percent = region.get('deviation_percent', 0)
+                if standard_yield and standard_yield > 0:
+                    weighted_sum += deviation_percent * standard_yield
+                    total_weight += standard_yield
 
-            if best_region and best_region.get('deviation_percent', 0) > 0:
-                region_name = best_region.get('region_name', 'Регион')
-                predecessor = best_region.get('predecessor', 'неизвестно')
-                std_yield = best_region.get('standard_current_year_yield', 0)
-                sort_yield = best_region.get('current_year_yield', 0)
-                dev_percent = best_region.get('deviation_percent', 0)
+            avg_deviation_percent = weighted_sum / total_weight if total_weight > 0 else 0
+            if avg_deviation_percent > 0:
+                text += f"Средний уровень урожайности на {avg_deviation_percent:.1f}% выше стандарта (средневзвешенное по урожайности). "
+            elif avg_deviation_percent < 0:
+                text += f"Средний уровень урожайности на {abs(avg_deviation_percent):.1f}% ниже стандарта (средневзвешенное по урожайности). "
 
+        # Добавляем детальную информацию по всем регионам
+        if regions_breakdown:
+            # Дедупликация: группируем по region_id и берем среднее отклонение
+            region_map = {}
+            for region_data in regions_breakdown:
+                region_id = region_data.get('region_id')
+                if region_id not in region_map:
+                    region_map[region_id] = {
+                        'region_name': region_data.get('region_name', 'Регион'),
+                        'predecessor': region_data.get('predecessor', 'неизвестно'),
+                        'std_yield': region_data.get('standard_current_year_yield', 0),
+                        'sort_yield': region_data.get('current_year_yield', 0),
+                        'dev_percent': region_data.get('deviation_percent', 0),
+                        'count': 1
+                    }
+                else:
+                    # Если регион встречается с разными предшественниками, усредняем
+                    existing = region_map[region_id]
+                    existing['std_yield'] = (existing['std_yield'] * existing['count'] + region_data.get('standard_current_year_yield', 0)) / (existing['count'] + 1)
+                    existing['sort_yield'] = (existing['sort_yield'] * existing['count'] + region_data.get('current_year_yield', 0)) / (existing['count'] + 1)
+                    existing['dev_percent'] = (existing['dev_percent'] * existing['count'] + region_data.get('deviation_percent', 0)) / (existing['count'] + 1)
+                    existing['count'] += 1
+                    # Добавляем предшественников через запятую
+                    pred = region_data.get('predecessor', 'неизвестно')
+                    if pred not in existing['predecessor']:
+                        existing['predecessor'] += f", {pred}"
+
+            # Сортируем по deviation_percent
+            sorted_regions = sorted(region_map.values(), key=lambda r: r['dev_percent'], reverse=True)
+
+            # Показываем все регионы
+            for region in sorted_regions:
                 text += (
-                    f"В {region_name} (предшественник: {predecessor}) "
-                    f"стандарт {std_yield:.1f} ц/га, "
-                    f"сорт {sort_yield:.1f} ц/га, "
-                    f"отклонение {dev_percent:+.1f}%. "
-                )
-
-            if worst_region and worst_region.get('deviation_percent', 0) < 0:
-                region_name = worst_region.get('region_name', 'Регион')
-                predecessor = worst_region.get('predecessor', 'неизвестно')
-                std_yield = worst_region.get('standard_current_year_yield', 0)
-                sort_yield = worst_region.get('current_year_yield', 0)
-                dev_percent = worst_region.get('deviation_percent', 0)
-
-                text += (
-                    f"В {region_name} (предшественник: {predecessor}) "
-                    f"стандарт {std_yield:.1f} ц/га, "
-                    f"сорт {sort_yield:.1f} ц/га, "
-                    f"отклонение {dev_percent:+.1f}%. "
+                    f"В {region['region_name']} (предшественник: {region['predecessor']}) "
+                    f"стандарт {region['std_yield']:.1f} ц/га, "
+                    f"сорт {region['sort_yield']:.1f} ц/га, "
+                    f"отклонение {region['dev_percent']:+.1f}%. "
                 )
 
         reasons = []
@@ -642,10 +689,24 @@ class CommissionRecommendationService:
         years_tested: int,
         coverage_percent: float,
         regions_exceeding: int,
-        total_regions: int
+        total_regions: int,
+        violations: List[Dict]
     ) -> List[str]:
         """Извлечение ключевых фактов для отображения"""
         facts = []
+
+        # Факты о статусе в реестре ООС (первым, т.к. это важная информация)
+        # Проверяем все коды, связанные со статусом patents
+        patents_codes = ['TESTING_PATENTS_STATUS', 'ARCHIVE_PATENTS_STATUS',
+                        'UNKNOWN_PATENTS_STATUS', 'INVALID_PATENTS_STATUS']
+        patents_violations = [v for v in violations if v.get('code') in patents_codes]
+
+        if patents_violations:
+            # Берем первое предупреждение о статусе
+            violation = patents_violations[0]
+            details = violation.get('details', {})
+            status_display = details.get('status_display', 'Неизвестно')
+            facts.append(f"Статус в реестре ООС: {status_display}")
 
         # Факты по урожайности
         exceeding_percent = (regions_exceeding / total_regions * 100) if total_regions > 0 else 0
@@ -703,15 +764,10 @@ class CommissionRecommendationService:
         """Извлечение факторов риска"""
         risk_factors = []
 
-        # Критические нарушения
+        # Только критические нарушения (warnings перенесены в key_facts)
         critical_violations = [v for v in violations if v.get('severity') == 'critical']
         for violation in critical_violations:
             risk_factors.append(violation.get('message', ''))
-
-        # Предупреждения
-        warnings = [v for v in violations if v.get('severity') == 'warning']
-        for warning in warnings:
-            risk_factors.append(warning.get('message', ''))
 
         # Дополнительные риски для решения о включении в реестр
         if decision == 'PROPOSE_TO_REGISTRY':

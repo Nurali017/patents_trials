@@ -228,10 +228,14 @@ EVALUATION_THRESHOLDS = {
         'critical_indicators': ['lodging_resistance', 'winter_hardiness']
     },
     'yield': {
-        'deviation_significant_positive': 5.0,
-        'deviation_moderate_positive': 2.0,
-        'deviation_moderate_negative': -2.0,
-        'deviation_significant_negative': -5.0,
+        # Согласно методике: ≥8% → допуск к реестру
+        'deviation_significant_positive': 8.0,
+        # 3-8% → требуется анализ качества и устойчивости
+        'deviation_moderate_positive': 3.0,
+        # Пороги для отрицательных отклонений
+        'deviation_moderate_negative': -3.0,
+        'deviation_significant_negative': -8.0,
+        # Статистическая значимость (% регионов с превышением)
         'statistical_significance_threshold': 50.0,
     },
     'violations': {
