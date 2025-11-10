@@ -121,7 +121,7 @@ class SummaryService:
 
             # Генерация нарушений вместо автоматических рекомендаций
             violations = self.alert_service.generate_violations(
-                evaluation_scores, full_summary
+                evaluation_scores, full_summary, data['sort_record']
             )
 
             summary_items.append({

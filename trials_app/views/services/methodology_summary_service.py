@@ -270,7 +270,8 @@ class MethodologySummaryService:
                 'application_number': application.application_number,
                 'sort_record': {
                     'id': application.sort_record.id,
-                    'name': application.sort_record.name
+                    'name': application.sort_record.name,
+                    'patents_status': application.sort_record.patents_status
                 },
                 'maturity_group_code': data['maturity_group_code'],
                 'maturity_group_name': self._get_maturity_group_name(data['maturity_group_code']),
@@ -393,7 +394,11 @@ class MethodologySummaryService:
                 recommendations_by_application[application_number] = {
                     'application_id': item['application_id'],
                     'application_number': application_number,
-                    'sort_name': item['sort_record']['name'],
+                    'sort_record': {
+                        'id': item['sort_record']['id'],
+                        'name': item['sort_record']['name'],
+                        'patents_status': item['sort_record'].get('patents_status')
+                    },
                     'evaluation_scores': item.get('evaluation_scores', {}),
                     'violations': item.get('violations', []),  # Заменяет recommendation
                     'summary': item.get('overall_summary', {}),

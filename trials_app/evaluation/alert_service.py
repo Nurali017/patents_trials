@@ -19,31 +19,35 @@ class AlertService:
         self.minimum_years_tested = self.config['minimum_years_tested']
         self.minimum_coverage_percent = self.config['minimum_coverage_percent']
     
-    def generate_violations(self, evaluation_scores: Dict, overall_summary: Dict) -> List[Dict]:
+    def generate_violations(self, evaluation_scores: Dict, overall_summary: Dict, sort_record: Dict = None) -> List[Dict]:
         """
         Генерация списка нарушений по результатам оценки
-        
+
         Args:
             evaluation_scores: Балльные оценки (yield/quality/resistance scores)
             overall_summary: Общая сводка (coverage, years_tested, etc.)
-            
+            sort_record: Данные о сорте (id, name, patents_status)
+
         Returns:
             List of violations: [{'code': str, 'severity': str, 'message': str, 'details': dict}]
         """
         violations = []
-        
+
         # 1. Критические провалы баллов (≤2.0)
         violations.extend(self._check_critical_scores(evaluation_scores))
-        
+
         # 2. Критические показатели устойчивости (<3.0 на шкале 1-10)
         violations.extend(self._check_critical_resistance(evaluation_scores))
-        
+
         # 3. Недостаточность данных
         violations.extend(self._check_data_sufficiency(evaluation_scores, overall_summary))
-        
+
         # 4. Покрытие и продолжительность испытаний
         violations.extend(self._check_coverage_duration(overall_summary))
-        
+
+        # 5. Проверка статуса сорта в Patents Service
+        violations.extend(self._check_patents_status(sort_record))
+
         return violations
     
     def _check_critical_scores(self, evaluation_scores: Dict) -> List[Dict]:
@@ -225,6 +229,62 @@ class AlertService:
                     'minimum_years_required': self.minimum_years_tested
                 }
             })
-        
+
+        return violations
+
+    def _check_patents_status(self, sort_record: Dict) -> List[Dict]:
+        """
+        Проверка статуса сорта в Patents Service
+
+        Сорт должен быть в основном реестре (patents_status = 1)
+
+        Args:
+            sort_record: Данные о сорте (id, name, patents_status)
+
+        Returns:
+            List of violations (включая info-уровень для валидных статусов)
+        """
+        violations = []
+
+        if not sort_record:
+            return violations
+
+        patents_status = sort_record.get('patents_status')
+        sort_name = sort_record.get('name', 'Неизвестный сорт')
+
+        if patents_status == 1:
+            # Позитивное сообщение - сорт в основном реестре
+            violations.append({
+                'code': 'VALID_PATENTS_STATUS',
+                'severity': 'info',
+                'message': 'Сорт находится в основном реестре ООС',
+                'details': {
+                    'sort_name': sort_name,
+                    'current_status': patents_status,
+                    'status_display': 'MAIN (Основной реестр)'
+                }
+            })
+        else:
+            # Нарушение - сорт НЕ в основном реестре
+            status_names = {
+                1: 'MAIN (Основной реестр)',
+                2: 'TESTING (Испытания)',
+                3: 'ARCHIVE (Архив)',
+                None: 'Не определен'
+            }
+            current_status = status_names.get(patents_status, f'Неизвестный статус ({patents_status})')
+
+            violations.append({
+                'code': 'INVALID_PATENTS_STATUS',
+                'severity': 'critical',
+                'message': f'Сорт не находится в основном реестре ООС. Текущий статус: {current_status}',
+                'details': {
+                    'sort_name': sort_name,
+                    'current_status': patents_status,
+                    'required_status': 1,
+                    'status_display': current_status
+                }
+            })
+
         return violations
 
