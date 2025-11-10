@@ -165,12 +165,20 @@ class BallScorer:
             score = 3
             interpretation = "Не отличается от стандарта"
         
+        # Подсчет регионов по отклонениям от стандарта
+        regions_exceeding = sum(1 for r in regions_breakdown if r.get('deviation_percent', 0) > 0)
+        regions_below = sum(1 for r in regions_breakdown if r.get('deviation_percent', 0) < 0)
+        regions_neutral = len(regions_breakdown) - regions_exceeding - regions_below
+
         return {
             'score': score,
             'interpretation': interpretation,
             'deviation_from_standard': round(avg_deviation, 2),
             'statistical_significance': significance_percent >= sig_threshold,
             'significant_regions_percent': round(significance_percent, 1),
+            'regions_exceeding': regions_exceeding,
+            'regions_below': regions_below,
+            'regions_neutral': regions_neutral,
             'regions_breakdown': regions_breakdown
         }
     

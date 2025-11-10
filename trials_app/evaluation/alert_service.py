@@ -265,7 +265,7 @@ class AlertService:
                 }
             })
         else:
-            # Нарушение - сорт НЕ в основном реестре
+            # Предупреждение - сорт НЕ в основном реестре
             status_names = {
                 1: 'MAIN (Основной реестр)',
                 2: 'TESTING (Испытания)',
@@ -276,7 +276,7 @@ class AlertService:
 
             violations.append({
                 'code': 'INVALID_PATENTS_STATUS',
-                'severity': 'critical',
+                'severity': 'warning',
                 'message': f'Сорт не находится в основном реестре ООС. Текущий статус: {current_status}',
                 'details': {
                     'sort_name': sort_name,
