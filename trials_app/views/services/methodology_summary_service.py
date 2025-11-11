@@ -279,11 +279,11 @@ class MethodologySummaryService:
             # Получить данные качества и устойчивости за весь период
             quality_indicators = self._get_quality_indicators(application, region, years_range)
             resistance_indicators = self._get_resistance_indicators(application, region, years_range)
-            
-            # Рассчитать отклонение от стандарта для текущего года
+
+            # Рассчитать отклонение от стандарта (средняя за все годы)
             deviation_data = self._calculate_deviation_from_standard(
-                application, region, data['maturity_group_code'], 
-                data['predecessor_key'], current_year, current_year_yield
+                application, region, data['maturity_group_code'],
+                data['predecessor_key'], years_range, average_yield
             )
 
             detailed_items.append({
@@ -590,113 +590,128 @@ class MethodologySummaryService:
         
         return name_mapping.get(indicator_name, indicator_name.lower().replace(' ', '_'))
     
-    def _calculate_deviation_from_standard(self, application, region, maturity_group_code, 
-                                          predecessor_key, current_year, current_year_yield):
+    def _calculate_deviation_from_standard(self, application, region, maturity_group_code,
+                                          predecessor_key, years_range, average_yield):
         """
         Рассчитать отклонение от стандарта для сорта в регионе
-        
+
         Args:
             application: Заявка
             region: Регион
             maturity_group_code: Код группы спелости
             predecessor_key: Ключ предшественника
-            current_year: Текущий год отчета
-            current_year_yield: Урожайность сорта в текущем году
-            
+            years_range: Диапазон лет испытаний
+            average_yield: Средняя урожайность сорта за все годы
+
         Returns:
             Dict с данными отклонения от стандарта
         """
-        if not current_year_yield:
+        if not average_yield:
             return {}
-        
+
         # Найти стандарт для этой группы спелости и предшественника
-        current_year_trials = Trial.objects.filter(
-            region=region,
-            year=current_year,
-            is_deleted=False
-        ).values_list('id', flat=True)
-        
-        standard_participants = TrialParticipant.objects.filter(
-            trial__id__in=current_year_trials,
-            statistical_group=0,  # Стандарт
-            maturity_group_code=maturity_group_code,
-            is_deleted=False
-        ).select_related('sort_record', 'trial', 'trial__predecessor_culture')
-        
-        # Фильтруем по predecessor_key
+        # Используем любой год из диапазона для определения стандарта
         standard_sort = None
-        for participant in standard_participants:
-            if self._get_predecessor_key(participant.trial) == predecessor_key:
-                standard_sort = participant.sort_record
+        for year in years_range:
+            trials = Trial.objects.filter(
+                region=region,
+                year=year,
+                is_deleted=False
+            ).values_list('id', flat=True)
+
+            standard_participants = TrialParticipant.objects.filter(
+                trial__id__in=trials,
+                statistical_group=0,  # Стандарт
+                maturity_group_code=maturity_group_code,
+                is_deleted=False
+            ).select_related('sort_record', 'trial', 'trial__predecessor_culture')
+
+            # Фильтруем по predecessor_key
+            for participant in standard_participants:
+                if self._get_predecessor_key(participant.trial) == predecessor_key:
+                    standard_sort = participant.sort_record
+                    break
+
+            if standard_sort:
                 break
-        
+
         if not standard_sort:
             return {}
-        
-        # Получить урожайность стандарта за текущий год
-        standard_yield = self._get_standard_yield(standard_sort, region, current_year, 
-                                                   maturity_group_code, predecessor_key)
-        
-        if not standard_yield:
+
+        # Получить среднюю урожайность стандарта за все годы
+        standard_average_yield = self._get_standard_average_yield(
+            standard_sort, region, years_range, maturity_group_code, predecessor_key
+        )
+
+        if not standard_average_yield:
             return {}
-        
-        # Вычислить отклонение
-        deviation = current_year_yield - standard_yield
-        deviation_percent = (deviation / standard_yield) * 100
-        
+
+        # Вычислить отклонение (средняя сорта - средняя стандарта)
+        deviation = average_yield - standard_average_yield
+        deviation_percent = (deviation / standard_average_yield) * 100
+
         return {
             'deviation_from_standard': round(deviation, 1),
             'deviation_percent': round(deviation_percent, 1),
             'standard_name': standard_sort.name,
-            'standard_current_year_yield': standard_yield
+            'standard_average_yield': standard_average_yield
         }
     
-    def _get_standard_yield(self, standard_sort, region, year, maturity_group_code, predecessor_key):
+    def _get_standard_average_yield(self, standard_sort, region, years_range, maturity_group_code, predecessor_key):
         """
-        Получить урожайность стандарта для конкретного года
-        
+        Получить среднюю урожайность стандарта за все годы испытаний
+
         Args:
             standard_sort: Сорт-стандарт
             region: Регион
-            year: Год
+            years_range: Диапазон лет испытаний (tuple или list)
             maturity_group_code: Код группы спелости
             predecessor_key: Ключ предшественника
-            
+
         Returns:
-            Урожайность стандарта или None
+            Средняя урожайность стандарта за все годы или None
         """
         yield_indicator = Indicator.objects.filter(code='yield').first()
-        
-        # Найти участников стандарта
-        participants = TrialParticipant.objects.filter(
-            sort_record=standard_sort,
-            trial__region=region,
-            trial__year=year,
-            maturity_group_code=maturity_group_code,
-            statistical_group=0,
-            is_deleted=False
-        ).select_related('trial', 'trial__predecessor_culture')
-        
-        # Фильтруем по predecessor_key
-        trial_ids = []
-        for p in participants:
-            if self._get_predecessor_key(p.trial) == predecessor_key:
-                trial_ids.append(p.trial_id)
-        
-        if not trial_ids:
-            return None
-        
-        # Получить результаты урожайности
-        results = TrialResult.objects.filter(
-            trial_id__in=trial_ids,
-            participant__sort_record=standard_sort,
-            indicator=yield_indicator,
-            is_deleted=False
-        )
-        
-        if results.exists():
-            avg_yield = results.aggregate(avg=Avg('value'))['avg']
-            if avg_yield:
-                return round(float(avg_yield), 1)
-        
+
+        # Собираем урожайность по годам
+        yields_by_year = {}
+
+        for year in years_range:
+            # Найти участников стандарта за конкретный год
+            participants = TrialParticipant.objects.filter(
+                sort_record=standard_sort,
+                trial__region=region,
+                trial__year=year,
+                maturity_group_code=maturity_group_code,
+                statistical_group=0,
+                is_deleted=False
+            ).select_related('trial', 'trial__predecessor_culture')
+
+            # Фильтруем по predecessor_key
+            trial_ids = []
+            for p in participants:
+                if self._get_predecessor_key(p.trial) == predecessor_key:
+                    trial_ids.append(p.trial_id)
+
+            if not trial_ids:
+                continue
+
+            # Получить результаты урожайности за этот год
+            results = TrialResult.objects.filter(
+                trial_id__in=trial_ids,
+                participant__sort_record=standard_sort,
+                indicator=yield_indicator,
+                is_deleted=False
+            )
+
+            if results.exists():
+                avg_yield_for_year = results.aggregate(avg=Avg('value'))['avg']
+                if avg_yield_for_year:
+                    yields_by_year[year] = round(float(avg_yield_for_year), 1)
+
+        # Рассчитываем среднее за все годы (аналогично сорту)
+        if yields_by_year:
+            average_yield = round(sum(yields_by_year.values()) / len(yields_by_year), 1)
+            return average_yield
+
         return None

@@ -92,7 +92,7 @@ class BallScorer:
                 significant_regions += 1
 
             # Вычисляем средневзвешенное по урожайности стандарта
-            standard_yield = region.get('standard_current_year_yield', 0)
+            standard_yield = region.get('standard_average_yield', 0)
             deviation_percent = region.get('deviation_percent', 0)
 
             if standard_yield and standard_yield > 0:
@@ -118,7 +118,7 @@ class BallScorer:
                 'deviation_from_standard': region.get('deviation_from_standard'),
                 'deviation_percent': deviation_percent,
                 'standard_name': region.get('standard_name'),
-                'standard_current_year_yield': standard_yield,
+                'standard_average_yield': standard_yield,
                 'statistical_significance': region.get('statistical_significance', False),
                 'predecessor': region.get('predecessor', 'Неизвестно')
             })

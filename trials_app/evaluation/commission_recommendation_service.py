@@ -59,7 +59,7 @@ class CommissionRecommendationService:
             total_weight = 0
             weighted_sum = 0
             for region in regions_breakdown:
-                standard_yield = region.get('standard_current_year_yield', 0)
+                standard_yield = region.get('standard_average_yield', 0)
                 deviation_percent = region.get('deviation_percent', 0)
                 if standard_yield and standard_yield > 0:
                     weighted_sum += deviation_percent * standard_yield
@@ -393,7 +393,7 @@ class CommissionRecommendationService:
                 for i, region in enumerate(representative_regions[:2]):
                     region_name = region.get('region_name', 'Регион')
                     predecessor = region.get('predecessor', 'неизвестно')
-                    std_yield = region.get('standard_current_year_yield', 0)
+                    std_yield = region.get('standard_average_yield', 0)
                     sort_yield = region.get('current_year_yield', 0)
                     dev_percent = region.get('deviation_percent', 0)
 
@@ -435,7 +435,7 @@ class CommissionRecommendationService:
             total_weight = 0
             weighted_sum = 0
             for region in regions_breakdown:
-                standard_yield = region.get('standard_current_year_yield', 0)
+                standard_yield = region.get('standard_average_yield', 0)
                 deviation_percent = region.get('deviation_percent', 0)
                 if standard_yield and standard_yield > 0:
                     weighted_sum += deviation_percent * standard_yield
@@ -453,7 +453,7 @@ class CommissionRecommendationService:
         for i, region in enumerate(representative_regions):
             region_name = region.get('region_name', 'Регион')
             predecessor = region.get('predecessor', 'неизвестно')
-            std_yield = region.get('standard_current_year_yield', 0)
+            std_yield = region.get('standard_average_yield', 0)
             sort_yield = region.get('current_year_yield', 0)
             dev_percent = region.get('deviation_percent', 0)
 
@@ -509,7 +509,7 @@ class CommissionRecommendationService:
         for i, region in enumerate(representative_regions[:2]):
             region_name = region.get('region_name', 'Регион')
             predecessor = region.get('predecessor', 'неизвестно')
-            std_yield = region.get('standard_current_year_yield', 0)
+            std_yield = region.get('standard_average_yield', 0)
             sort_yield = region.get('current_year_yield', 0)
             dev_percent = region.get('deviation_percent', 0)
 
@@ -534,7 +534,7 @@ class CommissionRecommendationService:
             weighted_sum = 0
 
             for region in regions_breakdown:
-                standard_yield = region.get('standard_current_year_yield', 0)
+                standard_yield = region.get('standard_average_yield', 0)
                 deviation_percent = region.get('deviation_percent', 0)
                 if standard_yield and standard_yield > 0:
                     weighted_sum += deviation_percent * standard_yield
@@ -649,7 +649,7 @@ class CommissionRecommendationService:
             total_weight = 0
             weighted_sum = 0
             for region in regions_breakdown:
-                standard_yield = region.get('standard_current_year_yield', 0)
+                standard_yield = region.get('standard_average_yield', 0)
                 deviation_percent = region.get('deviation_percent', 0)
                 if standard_yield and standard_yield > 0:
                     weighted_sum += deviation_percent * standard_yield
@@ -671,7 +671,7 @@ class CommissionRecommendationService:
                     region_map[region_id] = {
                         'region_name': region_data.get('region_name', 'Регион'),
                         'predecessor': region_data.get('predecessor', 'неизвестно'),
-                        'std_yield': region_data.get('standard_current_year_yield', 0),
+                        'std_yield': region_data.get('standard_average_yield', 0),
                         'sort_yield': region_data.get('current_year_yield', 0),
                         'dev_percent': region_data.get('deviation_percent', 0),
                         'count': 1
@@ -679,7 +679,7 @@ class CommissionRecommendationService:
                 else:
                     # Если регион встречается с разными предшественниками, усредняем
                     existing = region_map[region_id]
-                    existing['std_yield'] = (existing['std_yield'] * existing['count'] + region_data.get('standard_current_year_yield', 0)) / (existing['count'] + 1)
+                    existing['std_yield'] = (existing['std_yield'] * existing['count'] + region_data.get('standard_average_yield', 0)) / (existing['count'] + 1)
                     existing['sort_yield'] = (existing['sort_yield'] * existing['count'] + region_data.get('current_year_yield', 0)) / (existing['count'] + 1)
                     existing['dev_percent'] = (existing['dev_percent'] * existing['count'] + region_data.get('deviation_percent', 0)) / (existing['count'] + 1)
                     existing['count'] += 1
