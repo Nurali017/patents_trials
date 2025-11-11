@@ -55,6 +55,7 @@ class CommissionRecommendationService:
 
         # Вычисляем средневзвешенное процентное отклонение по урожайности стандарта
         avg_deviation_percent = 0.0
+        avg_deviation_absolute = 0.0
         if regions_breakdown:
             total_weight = 0
             weighted_sum = 0
@@ -65,6 +66,10 @@ class CommissionRecommendationService:
                     weighted_sum += deviation_percent * standard_yield
                     total_weight += standard_yield
             avg_deviation_percent = weighted_sum / total_weight if total_weight > 0 else 0
+
+            # Рассчитываем среднее абсолютное отклонение в ц/га
+            deviations_absolute = [r.get('deviation_from_standard', 0) for r in regions_breakdown]
+            avg_deviation_absolute = sum(deviations_absolute) / len(deviations_absolute) if deviations_absolute else 0
 
         # Используем gsu_total из overall_summary (общее количество ГСУ для группы культуры)
         total_regions = overall_summary.get('gsu_total', len(regions_breakdown))
@@ -148,7 +153,8 @@ class CommissionRecommendationService:
                 'below': regions_below,
                 'neutral': regions_neutral,
                 'total': total_regions,
-                'avg_deviation_percent': round(avg_deviation_percent, 1)
+                'avg_deviation_percent': round(avg_deviation_percent, 1),
+                'avg_deviation_absolute': round(avg_deviation_absolute, 1)
             },
             'risk_factors': risk_factors
         }
@@ -443,7 +449,9 @@ class CommissionRecommendationService:
 
             avg_deviation_percent = weighted_sum / total_weight if total_weight > 0 else 0
             if avg_deviation_percent > 0:
-                text += f"Средний уровень урожайности на {avg_deviation_percent:.1f}% выше стандарта (средневзвешенное по урожайности). "
+                # Рассчитываем среднее абсолютное отклонение
+                avg_deviation_absolute = sum(r.get('deviation_from_standard', 0) for r in regions_breakdown) / len(regions_breakdown)
+                text += f"Средний уровень урожайности выше стандарта на {avg_deviation_absolute:+.1f} ц/га ({avg_deviation_percent:+.1f}%). "
         elif deviation > 0:
             text += f"Среднее превышение составляет {deviation:+.1f}%. "
 
@@ -543,7 +551,9 @@ class CommissionRecommendationService:
             avg_deviation_percent = weighted_sum / total_weight if total_weight > 0 else 0
 
             if avg_deviation_percent < 0:
-                text += f" Средний уровень урожайности на {abs(avg_deviation_percent):.1f}% ниже стандарта (средневзвешенное по урожайности)."
+                # Рассчитываем среднее абсолютное отклонение
+                avg_deviation_absolute = sum(r.get('deviation_from_standard', 0) for r in regions_breakdown) / len(regions_breakdown)
+                text += f" Средний уровень урожайности ниже стандарта на {abs(avg_deviation_absolute):.1f} ц/га ({abs(avg_deviation_percent):.1f}%)."
 
         return text
 
@@ -657,9 +667,13 @@ class CommissionRecommendationService:
 
             avg_deviation_percent = weighted_sum / total_weight if total_weight > 0 else 0
             if avg_deviation_percent > 0:
-                text += f"Средний уровень урожайности на {avg_deviation_percent:.1f}% выше стандарта (средневзвешенное по урожайности). "
+                # Рассчитываем среднее абсолютное отклонение
+                avg_deviation_absolute = sum(r.get('deviation_from_standard', 0) for r in regions_breakdown) / len(regions_breakdown)
+                text += f"Средний уровень урожайности выше стандарта на {avg_deviation_absolute:+.1f} ц/га ({avg_deviation_percent:+.1f}%). "
             elif avg_deviation_percent < 0:
-                text += f"Средний уровень урожайности на {abs(avg_deviation_percent):.1f}% ниже стандарта (средневзвешенное по урожайности). "
+                # Рассчитываем среднее абсолютное отклонение
+                avg_deviation_absolute = sum(r.get('deviation_from_standard', 0) for r in regions_breakdown) / len(regions_breakdown)
+                text += f"Средний уровень урожайности ниже стандарта на {abs(avg_deviation_absolute):.1f} ц/га ({abs(avg_deviation_percent):.1f}%). "
 
         # Добавляем детальную информацию по всем регионам
         if regions_breakdown:
@@ -791,7 +805,7 @@ class CommissionRecommendationService:
 
         # Факты по урожайности
         exceeding_percent = (regions_exceeding / total_regions * 100) if total_regions > 0 else 0
-        deviation = yield_details.get('deviation_from_standard', 0)
+        deviation_absolute = yield_details.get('deviation_from_standard', 0)
 
         if regions_exceeding > 0:
             facts.append(
@@ -801,9 +815,12 @@ class CommissionRecommendationService:
         else:
             facts.append(f"Уступает стандарту во всех {total_regions} регионах")
 
-        if deviation != 0:
-            sign = "+" if deviation > 0 else ""
-            facts.append(f"Среднее отклонение урожайности: {sign}{deviation:.1f}%")
+        if deviation_absolute != 0:
+            sign = "+" if deviation_absolute > 0 else ""
+            # Получаем процентное отклонение из regions_summary
+            regions_summary = yield_details.get('regions_summary', {})
+            deviation_percent = regions_summary.get('avg_deviation_percent', 0)
+            facts.append(f"Среднее отклонение урожайности: {sign}{deviation_absolute:.1f} ц/га ({sign}{deviation_percent:.1f}%)")
 
         # Факты по качеству и устойчивости
         if quality_score is not None:

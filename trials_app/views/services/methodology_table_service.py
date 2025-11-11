@@ -252,12 +252,15 @@ class MethodologyTableService:
                         # Определяем is_standard
                         is_sort_standard = sort_item.get('is_standard', False)
 
-                        # Для стандартов deviation_percent должен быть пустой строкой
+                        # Для стандартов deviation_percent и deviation_from_standard должны быть пустой строкой
                         deviation_percent = sort_item['trial_data'].get('deviation_percent')
+                        deviation_from_standard = sort_item['trial_data'].get('deviation_from_standard')
                         if is_sort_standard:
                             deviation_percent = ""
+                            deviation_from_standard = ""
                         elif deviation_percent is None:
                             deviation_percent = None
+                            deviation_from_standard = None
 
                         sort_data = {
                             'sort_name': sort_item['sort_record']['name'],
@@ -266,6 +269,7 @@ class MethodologyTableService:
                             'is_comparison_standard': sort_item.get('is_comparison_standard', False),
                             'yields_by_year': sort_item['trial_data']['yields_by_year'],
                             'average_yield': sort_item['trial_data']['average_yield'],
+                            'deviation_from_standard': deviation_from_standard,
                             'deviation_percent': deviation_percent,
                             'years_tested': sort_item['trial_data']['years_tested'],
                             'year_started': sort_item['trial_data']['year_started'],
