@@ -82,9 +82,13 @@ class CommissionRecommendationService:
         decision = self._determine_decision(
             yield_score=yield_score,
             regions_exceeding=regions_exceeding,
+            regions_below=regions_below,
+            regions_neutral=regions_neutral,
             total_regions=total_regions,
             years_tested=years_tested,
-            has_critical_violations=has_critical_violations
+            has_critical_violations=has_critical_violations,
+            sort_name=sort_name,
+            regions_breakdown=regions_breakdown
         )
 
         # Расчет уровня уверенности
@@ -153,19 +157,26 @@ class CommissionRecommendationService:
         self,
         yield_score: Optional[float],
         regions_exceeding: int,
+        regions_below: int,
+        regions_neutral: int,
         total_regions: int,
         years_tested: int,
-        has_critical_violations: bool
+        has_critical_violations: bool,
+        sort_name: str,
+        regions_breakdown: List[Dict]
     ) -> str:
         """
         Определение категории решения (согласно методике)
 
         PROPOSE_TO_REGISTRY:
-        1. Значительное превышение (методика):
+        1. Сорт используется как стандарт (тестируется сам с собой):
+           - Все отклонения ≈ 0%
+           - Сорт == Стандарт
+        2. Значительное превышение (методика):
            - yield_score >= 5 (≥8% превышение)
            - regions_exceeding >= 50%
            - нет critical violations
-        2. Стандартные критерии:
+        3. Стандартные критерии:
            - yield_score >= 4 (3-8% превышение)
            - regions_exceeding >= 50%
            - years_tested >= 3
@@ -173,7 +184,7 @@ class CommissionRecommendationService:
 
         PROPOSE_TO_REMOVE:
         - yield_score <= 2
-        - ИЛИ regions_exceeding == 0 (уступает везде)
+        - ИЛИ regions_exceeding == 0 (уступает везде) И есть уступающие регионы
         - ИЛИ critical violations
 
         CONTINUE_TRIALS:
@@ -182,6 +193,23 @@ class CommissionRecommendationService:
         if yield_score is None or total_regions == 0:
             return 'CONTINUE_TRIALS'
 
+        # СПЕЦИАЛЬНЫЙ СЛУЧАЙ: Сорт испытывается сам с собой как стандарт
+        # Проверяем, что все регионы имеют deviation ≈ 0 и сорт == стандарт
+        if regions_breakdown and yield_score == 3:
+            is_self_standard = True
+            for region in regions_breakdown:
+                deviation = abs(region.get('deviation_percent', 0))
+                standard_name = region.get('standard_name', '')
+
+                # Если отклонение > 1% или стандарт не совпадает с сортом
+                if deviation > 1.0 or (standard_name and standard_name != sort_name):
+                    is_self_standard = False
+                    break
+
+            if is_self_standard and years_tested >= 3:
+                # Сорт уже используется как стандарт → рекомендуем к реестру
+                return 'PROPOSE_TO_REGISTRY'
+
         # Критерии для СНЯТИЯ
         if has_critical_violations:
             return 'PROPOSE_TO_REMOVE'
@@ -189,7 +217,8 @@ class CommissionRecommendationService:
         if yield_score <= 2.0:
             return 'PROPOSE_TO_REMOVE'
 
-        if regions_exceeding == 0 and total_regions > 0:
+        # Уступает везде (но только если действительно уступает, а не просто на уровне стандарта)
+        if regions_exceeding == 0 and regions_below > 0 and total_regions > 0:
             return 'PROPOSE_TO_REMOVE'
 
         # Критерии для РЕЕСТРА
@@ -232,7 +261,10 @@ class CommissionRecommendationService:
 
         # Высокая уверенность
         if decision == 'PROPOSE_TO_REGISTRY':
-            if (yield_score >= 4.5 and
+            # Специальный случай: сорт используется как стандарт (yield_score == 3 и regions_exceeding == 0)
+            if yield_score == 3 and regions_exceeding == 0 and years_tested >= 3:
+                return 'high'  # Высокая уверенность - сорт уже является стандартом
+            elif (yield_score >= 4.5 and
                 exceeding_percent >= 75 and
                 years_tested >= 3 and
                 coverage_percent >= 60):
@@ -344,6 +376,55 @@ class CommissionRecommendationService:
         """Генерация обоснования для включения в реестр"""
         exceeding_percent = (regions_exceeding / total_regions * 100) if total_regions > 0 else 0
 
+        # СПЕЦИАЛЬНЫЙ СЛУЧАЙ: Сорт испытывается сам с собой как стандарт
+        if regions_breakdown and sort_name == standard_name:
+            # Проверяем, что все отклонения близки к нулю
+            all_near_zero = all(abs(r.get('deviation_percent', 0)) <= 1.0 for r in regions_breakdown)
+
+            if all_near_zero:
+                text = (
+                    f"Сорт {sort_name} испытывался как стандарт во всех {total_regions} регионах, "
+                    f"показав стабильные результаты на уровне эталона. "
+                )
+
+                text += f"Прошел полный цикл испытаний ({years_tested} года). "
+
+                # Добавляем примеры регионов
+                for i, region in enumerate(representative_regions[:2]):
+                    region_name = region.get('region_name', 'Регион')
+                    predecessor = region.get('predecessor', 'неизвестно')
+                    std_yield = region.get('standard_current_year_yield', 0)
+                    sort_yield = region.get('current_year_yield', 0)
+                    dev_percent = region.get('deviation_percent', 0)
+
+                    if i == 0:
+                        text += f"В {region_name} "
+                    else:
+                        text += f"В {region_name} "
+
+                    text += (
+                        f"по предшественнику {predecessor}: "
+                        f"стандарт {std_yield:.1f} ц/га, "
+                        f"сорт {sort_yield:.1f} ц/га, "
+                        f"отклонение {dev_percent:+.1f}%. "
+                    )
+
+                # Добавляем информацию о качестве и устойчивости
+                if quality_score is not None and resistance_score is not None:
+                    text += (
+                        f"Показатели качества и устойчивости подтверждают его статус как стандарта "
+                        f"({quality_score:.1f} и {resistance_score:.1f} балла соответственно). "
+                    )
+                elif quality_score is not None:
+                    text += f"Показатели качества подтверждают его статус как стандарта ({quality_score:.1f} балла). "
+                elif resistance_score is not None:
+                    text += f"Показатели устойчивости подтверждают его статус как стандарта ({resistance_score:.1f} балла). "
+
+                text += "Рекомендуется к включению в реестр как проверенный стандартный сорт."
+
+                return text
+
+        # ОБЫЧНЫЙ СЛУЧАЙ: Сорт превышает стандарт
         text = (
             f"Сорт {sort_name} превышает стандарт {standard_name} "
             f"в {regions_exceeding} из {total_regions} регионов ({exceeding_percent:.0f}%). "
