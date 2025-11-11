@@ -119,6 +119,7 @@ class MethodologyTableService:
         """
         yield_indicator = Indicator.objects.filter(code='yield').first()
 
+        # ПРОХОД 1: Пересчитываем урожайность для всех сортов
         for region_name, groups in regions_groups.items():
             # Найти region object
             try:
@@ -184,6 +185,37 @@ class MethodologyTableService:
 
                         # Сохраняем predecessor_name в item
                         item['predecessor_name'] = predecessor_name
+
+        # ПРОХОД 2: Пересчитываем отклонения от стандарта используя average_yield
+        for region_name, groups in regions_groups.items():
+            for group_code, predecessors_dict in groups.items():
+                for predecessor_key, sorts_dict in predecessors_dict.items():
+                    # Найти стандарт для этой группы и предшественника
+                    standard_item = None
+                    for sort_id, item in sorts_dict.items():
+                        if item.get('is_comparison_standard', False):
+                            standard_item = item
+                            break
+
+                    if not standard_item:
+                        continue
+
+                    standard_average_yield = standard_item['trial_data'].get('average_yield')
+                    if not standard_average_yield or standard_average_yield <= 0:
+                        continue
+
+                    # Пересчитываем отклонения для всех сортов в этой группе
+                    for sort_id, item in sorts_dict.items():
+                        average_yield = item['trial_data'].get('average_yield')
+
+                        if average_yield is not None:
+                            deviation = average_yield - standard_average_yield
+                            deviation_percent = (deviation / standard_average_yield) * 100
+
+                            item['trial_data']['deviation_from_standard'] = round(deviation, 1)
+                            item['trial_data']['deviation_percent'] = round(deviation_percent, 1)
+                            item['trial_data']['standard_name'] = standard_item['sort_record']['name']
+                            item['trial_data']['standard_average_yield'] = standard_average_yield
 
     def _build_standards_by_group(self, detailed_items):
         """
