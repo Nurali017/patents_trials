@@ -1,11 +1,14 @@
 """
 Application ViewSets
 """
-from rest_framework import viewsets, permissions, status
+import json
+import logging
+
+from rest_framework import viewsets, permissions, status, parsers, serializers as drf_serializers
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from django.utils import timezone
-from django.db import models as django_models
+from django.db import models as django_models, transaction
 from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework.filters import OrderingFilter
 from rest_framework.pagination import PageNumberPagination
@@ -15,6 +18,7 @@ from ..models import (
     Originator, SortRecord, Application, ApplicationDecisionHistory,
     PlannedDistribution, TrialType, Trial, TrialParticipant, TrialResult,
     TrialLaboratoryResult, Document, TrialPlan, TrialPlanParticipant,
+    APPLICATION_MANDATORY_DOCUMENT_TYPES,
     TrialPlanTrial, TrialPlanCulture, TrialPlanCultureTrialType
 )
 from ..serializers import (
@@ -24,12 +28,17 @@ from ..serializers import (
     TrialTypeSerializer, TrialSerializer, TrialParticipantSerializer,
     TrialResultSerializer, TrialLaboratoryResultSerializer,
     DocumentSerializer, TrialPlanSerializer, TrialPlanWriteSerializer,
+    ApplicationSubmissionDocumentMetaSerializer,
     TrialPlanAddParticipantsSerializer, TrialPlanCultureSerializer,
     TrialPlanAddCultureSerializer, create_basic_trial_results,
     create_quality_trial_results
 )
 from ..filters import ApplicationFilter
 from ..patents_integration import patents_api
+from ..services import WorkflowService
+from ..storage import is_storage_error
+
+logger = logging.getLogger(__name__)
 
 
 class ApplicationViewSet(viewsets.ModelViewSet):
@@ -86,6 +95,160 @@ class ApplicationViewSet(viewsets.ModelViewSet):
     def perform_create(self, serializer):
         """При создании заявки устанавливаем created_by"""
         serializer.save(created_by=self.request.user if self.request.user.is_authenticated else None)
+
+    @staticmethod
+    def _cleanup_saved_files(saved_files):
+        for storage, file_name in reversed(saved_files):
+            if not file_name:
+                continue
+            try:
+                if storage.exists(file_name):
+                    storage.delete(file_name)
+            except Exception:
+                logger.warning('Failed to cleanup uploaded file %s after rollback', file_name, exc_info=True)
+
+    @action(
+        detail=False,
+        methods=['post'],
+        url_path='submit',
+        parser_classes=[parsers.MultiPartParser, parsers.FormParser],
+    )
+    def submit(self, request):
+        """
+        Атомарная подача заявки с документами в одном multipart-запросе.
+        """
+        payload_raw = request.data.get('payload')
+        document_meta_raw = request.data.get('document_meta')
+        uploaded_files = request.FILES.getlist('documents')
+
+        if not payload_raw:
+            return Response({'payload': ['This field is required.']}, status=status.HTTP_400_BAD_REQUEST)
+        if not document_meta_raw:
+            return Response({'document_meta': ['This field is required.']}, status=status.HTTP_400_BAD_REQUEST)
+        if not uploaded_files:
+            return Response({'documents': ['At least one file is required.']}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            payload = json.loads(payload_raw)
+        except (TypeError, ValueError):
+            return Response(
+                {'payload': ['Expected a valid JSON object string.']},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            document_meta = json.loads(document_meta_raw)
+        except (TypeError, ValueError):
+            return Response(
+                {'document_meta': ['Expected a valid JSON array string.']},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if not isinstance(payload, dict):
+            return Response(
+                {'payload': ['Expected a JSON object.']},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if not isinstance(document_meta, list):
+            return Response(
+                {'document_meta': ['Expected a JSON array.']},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if len(uploaded_files) != len(document_meta):
+            return Response(
+                {'documents': ['Document files count must match document_meta count.']},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        application_serializer = self.get_serializer(data=payload)
+        application_serializer.is_valid(raise_exception=True)
+
+        document_meta_serializer = ApplicationSubmissionDocumentMetaSerializer(data=document_meta, many=True)
+        if not document_meta_serializer.is_valid():
+            return Response(
+                {'document_meta': document_meta_serializer.errors},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        submitted_document_types = {
+            item['document_type']
+            for item in document_meta_serializer.validated_data
+        }
+        missing_document_types = [
+            doc_type
+            for doc_type in APPLICATION_MANDATORY_DOCUMENT_TYPES
+            if doc_type not in submitted_document_types
+        ]
+        if missing_document_types:
+            return Response(
+                {
+                    'document_meta': ['Missing mandatory documents in submission.'],
+                    'missing_mandatory_documents': missing_document_types,
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        saved_files = []
+        created_document_ids = []
+        application = None
+
+        try:
+            with transaction.atomic():
+                application = application_serializer.save(created_by=request.user)
+
+                for meta, uploaded_file in zip(document_meta_serializer.validated_data, uploaded_files):
+                    document_serializer = DocumentSerializer(data={
+                        'title': meta['title'],
+                        'document_type': meta['document_type'],
+                        'is_mandatory': meta['is_mandatory'],
+                        'application': application.id,
+                        'file': uploaded_file,
+                    })
+                    document_serializer.is_valid(raise_exception=True)
+                    document = document_serializer.save(uploaded_by=request.user)
+                    created_document_ids.append(document.id)
+                    if document.file and document.file.name:
+                        saved_files.append((document.file.storage, document.file.name))
+        except drf_serializers.ValidationError as exc:
+            self._cleanup_saved_files(saved_files)
+            return Response(exc.detail, status=status.HTTP_400_BAD_REQUEST)
+        except Exception as exc:
+            self._cleanup_saved_files(saved_files)
+            if is_storage_error(exc):
+                logger.exception(
+                    'Atomic application submission storage failure application_number=%s sort_id=%s document_types=%s',
+                    payload.get('application_number'),
+                    payload.get('sort_id'),
+                    [item.get('document_type') for item in document_meta],
+                )
+                return Response(
+                    {
+                        'error': 'Document storage is unavailable. Please try again later.',
+                        'code': 'storage_unavailable',
+                    },
+                    status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                )
+            logger.exception(
+                'Atomic application submission failed application_number=%s sort_id=%s',
+                payload.get('application_number'),
+                payload.get('sort_id'),
+            )
+            return Response(
+                {
+                    'error': 'Failed to submit application with documents.',
+                    'code': 'submit_failed',
+                },
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+        return Response(
+            {
+                'application': self.get_serializer(application).data,
+                'document_ids': created_document_ids,
+                'documents_count': len(created_document_ids),
+            },
+            status=status.HTTP_201_CREATED,
+        )
     
     @action(detail=True, methods=['post'], url_path='distribute')
     def distribute(self, request, pk=None):
@@ -155,24 +318,7 @@ class ApplicationViewSet(viewsets.ModelViewSet):
                 'raw_data': dist  # Сохраняем оригинальные данные для JSON
             })
         
-        # Удаляем старые распределения (если переделывают)
-        PlannedDistribution.objects.filter(application=application).delete()
-        
-        # Создаем записи в таблице PlannedDistribution
-        created_distributions = []
-        for validated in validated_distributions:
-            planned_dist = PlannedDistribution.objects.create(
-                application=application,
-                region=validated['region'],
-                trial_type=validated['trial_type'],
-                planting_season=validated['planting_season'],
-                created_by=request.user
-            )
-            created_distributions.append(planned_dist)
-        
-        # Обновляем статус заявки
-        application.status = 'distributed'
-        application.save()
+        WorkflowService.distribute_application(application, validated_distributions, request.user)
         
         return Response({
             'success': True,
@@ -704,7 +850,4 @@ class ApplicationViewSet(viewsets.ModelViewSet):
             'sort_name': application.sort_record.name,
             'history': history_data
         })
-
-
-
 

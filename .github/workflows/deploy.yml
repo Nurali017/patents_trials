@@ -1,0 +1,102 @@
+name: Deploy trials-backend
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: trials-backend-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Prepare env artifacts
+        env:
+          TRIALS_ENV_APP: ${{ secrets.TRIALS_ENV_APP }}
+          TRIALS_ENV_DB: ${{ secrets.TRIALS_ENV_DB }}
+        run: |
+          set -eu
+          mkdir -p .deploy/trials
+          printf '%s' "$TRIALS_ENV_APP" > .deploy/trials/app
+          printf '%s' "$TRIALS_ENV_DB" > .deploy/trials/db
+
+      - name: Upload env files
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SERVER_USER }}
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          source: ".deploy/trials/*"
+          target: "/tmp/trials-deploy/"
+          strip_components: 2
+          overwrite: true
+
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SERVER_USER }}
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          script_stop: true
+          command_timeout: 30m
+          script: |
+            set -eu
+            backup_dir="/root/backups/trials"
+            timestamp="$(date +%Y%m%d_%H%M%S)"
+            repo_backup="${backup_dir}/trials_repo_${timestamp}.tgz"
+            db_backup="${backup_dir}/trials_db_${timestamp}.sql"
+
+            rollback() {
+              set +e
+              echo "Deploy failed. Restoring /root/trials-backend from ${repo_backup}"
+              docker compose -f /root/trials-backend/docker-compose.prod.yml down || true
+              rm -rf /root/trials-backend
+              tar -xzf "${repo_backup}" -C /root
+              cd /root/trials-backend
+              docker compose -f docker-compose.prod.yml up -d --build || true
+            }
+
+            trap 'rollback' ERR
+
+            mkdir -p "${backup_dir}"
+            tar -czf "${repo_backup}" -C /root trials-backend
+            docker exec trials_postgres sh -lc 'pg_dump -U "$POSTGRES_USER" "$POSTGRES_DB"' > "${db_backup}"
+
+            if ! docker network inspect patents_shared >/dev/null 2>&1; then
+              echo "Required shared network patents_shared is missing. Deploy patents-backend first."
+              exit 1
+            fi
+
+            cd /root/trials-backend
+            git fetch origin main
+            git reset --hard origin/main
+
+            mkdir -p env
+            cp /tmp/trials-deploy/app env/app
+            cp /tmp/trials-deploy/db env/db
+
+            docker compose -f docker-compose.prod.yml config -q
+            docker compose -f docker-compose.prod.yml up -d trials-db
+            docker compose -f docker-compose.prod.yml build trials_service
+            docker compose -f docker-compose.prod.yml up -d
+            sleep 20
+
+            COMPOSE_FILE_PATH=docker-compose.prod.yml bash scripts/smoke-test.sh http://127.0.0.1:8001
+
+            if [ -n "$(git status --short --untracked-files=no)" ]; then
+              echo "Tracked local changes remain in /root/trials-backend after deploy"
+              git status --short
+              exit 1
+            fi
+
+            trap - ERR
+
+            echo "Trials backend deployed successfully"
+            echo "Repo backup: ${repo_backup}"
+            echo "DB backup: ${db_backup}"

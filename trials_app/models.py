@@ -6,7 +6,7 @@ class SoftDeleteModel(models.Model):
     """Базовая модель с поддержкой мягкого удаления"""
     is_deleted = models.BooleanField(default=False)
     deleted_at = models.DateTimeField(null=True, blank=True)
-    
+
     class Meta:
         abstract = True
     
@@ -207,7 +207,7 @@ class Indicator(SoftDeleteModel):
     def is_applicable_for_culture(self, culture):
         """
         Проверить применимость показателя для культуры
-        
+
         Проверяет через группу культуры (новая логика)
         """
         if self.is_universal:
@@ -815,6 +815,14 @@ class ApplicationDecisionHistory(models.Model):
         return f"{self.application.application_number} - {self.oblast.name} - {self.year}: {self.get_decision_display()}"
 
 
+APPLICATION_MANDATORY_DOCUMENT_TYPES = (
+    'application_for_testing',
+    'breeding_questionnaire',
+    'variety_description',
+    'plant_photo_with_ruler',
+)
+
+
 class Application(SoftDeleteModel):
     """
     Заявка на сортоиспытание
@@ -937,8 +945,51 @@ class Application(SoftDeleteModel):
     
     def __str__(self):
         return f"{self.application_number} - {self.sort_record.name}"
-    
-    def update_oblast_status(self, oblast, new_status, trial_plan=None, trial=None):
+
+    def ensure_oblast_states(self):
+        """
+        Убедиться, что для всех target_oblasts есть явные записи состояния.
+        """
+        if not self.pk:
+            return
+
+        target_oblast_ids = list(self.target_oblasts.values_list('id', flat=True))
+        if not target_oblast_ids:
+            return
+
+        existing_states = {
+            state.oblast_id: state
+            for state in ApplicationOblastState.objects.filter(
+                application=self,
+                oblast_id__in=target_oblast_ids,
+            )
+        }
+
+        for oblast_id in target_oblast_ids:
+            state = existing_states.get(oblast_id)
+            if state is None:
+                ApplicationOblastState.objects.create(
+                    application=self,
+                    oblast_id=oblast_id,
+                )
+            elif state.is_deleted:
+                state.is_deleted = False
+                state.deleted_at = None
+                state.save(update_fields=['is_deleted', 'deleted_at', 'updated_at'])
+
+    def update_oblast_status(
+        self,
+        oblast,
+        new_status,
+        trial_plan=None,
+        trial=None,
+        decision_date=None,
+        decision_justification=None,
+        decided_by=None,
+        decision_year=None,
+        save_application_status=True,
+        **_ignored,
+    ):
         """
         Обновить статус заявки для конкретной области
         
@@ -948,38 +999,37 @@ class Application(SoftDeleteModel):
             trial_plan: Связанный план испытаний (опционально)
             trial: Связанное испытание (опционально)
         """
-        from django.db import connection
-        
-        with connection.cursor() as cursor:
-            # Проверить, существует ли запись
-            cursor.execute("""
-                SELECT id FROM trials_app_application_target_oblasts 
-                WHERE application_id = %s AND oblast_id = %s
-            """, [self.id, oblast.id])
-            
-            if cursor.fetchone():
-                # Обновить существующую запись
-                cursor.execute("""
-                    UPDATE trials_app_application_target_oblasts 
-                    SET status = %s, trial_plan_id = %s, trial_id = %s, 
-                        updated_at = NOW()
-                    WHERE application_id = %s AND oblast_id = %s
-                """, [new_status, trial_plan.id if trial_plan else None, 
-                      trial.id if trial else None, 
-                      self.id, oblast.id])
-            else:
-                # Создать новую запись
-                cursor.execute("""
-                    INSERT INTO trials_app_application_target_oblasts 
-                    (application_id, oblast_id, status, trial_plan_id, trial_id, 
-                     created_at, updated_at)
-                    VALUES (%s, %s, %s, %s, %s, NOW(), NOW())
-                """, [self.id, oblast.id, new_status, 
-                      trial_plan.id if trial_plan else None,
-                      trial.id if trial else None])
-        
-        # Обновить общий статус заявки на основе статусов по областям
-        self._update_overall_status()
+        if not self.target_oblasts.filter(id=oblast.id).exists():
+            self.target_oblasts.add(oblast)
+
+        self.ensure_oblast_states()
+
+        defaults = {
+            'status': new_status,
+            'trial_plan': trial_plan,
+        }
+        defaults['trial'] = trial
+
+        if decision_date is not None:
+            defaults['decision_date'] = decision_date
+        if decision_justification is not None:
+            defaults['decision_justification'] = decision_justification
+        if decided_by is not None or new_status in ['approved', 'continue', 'rejected', 'decision_pending', 'decision_made']:
+            defaults['decided_by'] = decided_by
+        if decision_year is not None:
+            defaults['decision_year'] = decision_year
+
+        state, _created = ApplicationOblastState.objects.update_or_create(
+            application=self,
+            oblast=oblast,
+            is_deleted=False,
+            defaults=defaults,
+        )
+
+        if save_application_status:
+            self._update_overall_status()
+
+        return state
     
     def get_oblast_status(self, oblast):
         """
@@ -991,16 +1041,13 @@ class Application(SoftDeleteModel):
         Returns:
             str: Статус заявки для области
         """
-        from django.db import connection
-        
-        with connection.cursor() as cursor:
-            cursor.execute("""
-                SELECT status FROM trials_app_application_target_oblasts 
-                WHERE application_id = %s AND oblast_id = %s
-            """, [self.id, oblast.id])
-            
-            result = cursor.fetchone()
-            return result[0] if result else 'planned'
+        self.ensure_oblast_states()
+        state = ApplicationOblastState.objects.filter(
+            application=self,
+            oblast=oblast,
+            is_deleted=False,
+        ).first()
+        return state.status if state else 'planned'
     
     def get_all_oblast_statuses(self):
         """
@@ -1009,29 +1056,30 @@ class Application(SoftDeleteModel):
         Returns:
             list: Список словарей со статусами
         """
-        from django.db import connection
-        
-        with connection.cursor() as cursor:
-            cursor.execute("""
-                SELECT oblast_id, status, trial_plan_id, trial_id, 
-                       decision_date, decision_justification, decided_by_id, decision_year
-                FROM trials_app_application_target_oblasts 
-                WHERE application_id = %s
-            """, [self.id])
-            
-            return [
-                {
-                    'oblast_id': row[0],
-                    'status': row[1],
-                    'trial_plan_id': row[2],
-                    'trial_id': row[3],
-                    'decision_date': row[4],
-                    'decision_justification': row[5],
-                    'decided_by_id': row[6],
-                    'decision_year': row[7]
-                }
-                for row in cursor.fetchall()
-            ]
+        self.ensure_oblast_states()
+        target_oblast_ids = self.target_oblasts.values_list('id', flat=True)
+        states = ApplicationOblastState.objects.filter(
+            application=self,
+            oblast_id__in=target_oblast_ids,
+            is_deleted=False,
+        ).select_related('oblast', 'trial_plan', 'trial', 'decided_by').order_by('oblast__name')
+
+        return [
+            {
+                'oblast_id': state.oblast_id,
+                'oblast_name': state.oblast.name,
+                'status': state.status,
+                'status_display': state.get_status_display(),
+                'trial_plan_id': state.trial_plan_id,
+                'trial_id': state.trial_id,
+                'decision_date': state.decision_date,
+                'decision_justification': state.decision_justification,
+                'decided_by_id': state.decided_by_id,
+                'decided_by_name': state.decided_by.username if state.decided_by else None,
+                'decision_year': state.decision_year,
+            }
+            for state in states
+        ]
     
     def _update_overall_status(self):
         """
@@ -1045,14 +1093,15 @@ class Application(SoftDeleteModel):
             self.status = 'registered'
         elif all(status['status'] in ['approved', 'rejected'] for status in oblast_statuses):
             self.status = 'completed'
-        elif any(status['status'] in ['trial_in_progress', 'trial_completed', 'decision_pending'] for status in oblast_statuses):
+        elif any(status['status'] in ['trial_created', 'trial_in_progress', 'trial_completed', 'decision_pending', 'continue'] for status in oblast_statuses):
             self.status = 'in_progress'
-        elif any(status['status'] in ['trial_plan_created', 'trial_created'] for status in oblast_statuses):
+        elif any(status['status'] in ['trial_plan_created'] for status in oblast_statuses):
             self.status = 'distributed'
         else:
             self.status = 'submitted'
-        
-        self.save()
+
+        if self.pk:
+            self.save(update_fields=['status', 'updated_at'])
     
     def make_decision(self, oblast, year, decision, justification=None, decided_by=None, average_yield=None):
         """
@@ -1076,46 +1125,31 @@ class Application(SoftDeleteModel):
             application=self,
             oblast=oblast,
             year__lte=year
-        ).count() + 1
-        
-        # Создать запись в истории
-        decision_history = ApplicationDecisionHistory.objects.create(
+        ).exclude(year=year).count() + 1
+
+        # Создать или обновить запись в истории
+        decision_history, _created = ApplicationDecisionHistory.objects.update_or_create(
             application=self,
             oblast=oblast,
             year=year,
-            decision=decision,
+            defaults={
+                'decision': decision,
+                'decision_date': timezone.now().date(),
+                'decision_justification': justification,
+                'decided_by': decided_by,
+                'average_yield': average_yield,
+                'years_tested_total': years_tested,
+            }
+        )
+
+        self.update_oblast_status(
+            oblast=oblast,
+            new_status=decision,
             decision_date=timezone.now().date(),
             decision_justification=justification,
             decided_by=decided_by,
-            average_yield=average_yield,
-            years_tested_total=years_tested
+            decision_year=year,
         )
-        
-        # Обновить текущий статус в trials_app_application_target_oblasts
-        from django.db import connection
-        
-        with connection.cursor() as cursor:
-            cursor.execute("""
-                UPDATE trials_app_application_target_oblasts 
-                SET status = %s, 
-                    decision_date = %s,
-                    decision_justification = %s,
-                    decided_by_id = %s,
-                    decision_year = %s,
-                    updated_at = NOW()
-                WHERE application_id = %s AND oblast_id = %s
-            """, [
-                decision,
-                timezone.now().date(),
-                justification,
-                decided_by.id if decided_by else None,
-                year,
-                self.id,
-                oblast.id
-            ])
-        
-        # Обновить общий статус заявки
-        self._update_overall_status()
         
         return decision_history
     
@@ -1156,21 +1190,16 @@ class Application(SoftDeleteModel):
         Returns:
             list: Список типов отсутствующих обязательных документов
         """
-        # Базовые обязательные документы
-        mandatory_docs = [
-            'application_for_testing',
-            'breeding_questionnaire',
-            'variety_description',
-            'plant_photo_with_ruler',
-        ]
-        
         # Дополнительные документы (условно обязательные)
         # TODO: Добавить логику определения когда нужны эти документы
         # - right_to_submit - если заявитель посредник/правопреемник
         # - gmo_free - если сорт иностранной селекции
         
         uploaded_docs = self.documents.filter(is_deleted=False).values_list('document_type', flat=True)
-        missing_docs = [doc for doc in mandatory_docs if doc not in uploaded_docs]
+        missing_docs = [
+            doc_type for doc_type in APPLICATION_MANDATORY_DOCUMENT_TYPES
+            if doc_type not in uploaded_docs
+        ]
         
         return missing_docs
     
@@ -1219,6 +1248,101 @@ class Application(SoftDeleteModel):
                 summary[status_name] += 1
         
         return summary
+
+
+class ApplicationOblastState(SoftDeleteModel):
+    """
+    Явное состояние заявки по области.
+
+    Источник истины для регионального прогресса заявки вместо скрытых колонок
+    в ManyToMany join-table.
+    """
+
+    STATUS_CHOICES = [
+        ('planned', 'Запланировано'),
+        ('trial_plan_created', 'План создан'),
+        ('trial_created', 'Испытание создано'),
+        ('trial_in_progress', 'Испытание идет'),
+        ('trial_completed', 'Испытание завершено'),
+        ('decision_pending', 'Ожидает решения'),
+        ('decision_made', 'Решение принято'),
+        ('approved', 'Одобрено'),
+        ('rejected', 'Отклонено'),
+        ('continue', 'Продолжить'),
+    ]
+
+    application = models.ForeignKey(
+        'Application',
+        on_delete=models.CASCADE,
+        related_name='oblast_states',
+        help_text='Заявка',
+    )
+    oblast = models.ForeignKey(
+        Oblast,
+        on_delete=models.CASCADE,
+        related_name='application_states',
+        help_text='Область',
+    )
+    status = models.CharField(
+        max_length=20,
+        choices=STATUS_CHOICES,
+        default='planned',
+        help_text='Статус заявки для конкретной области',
+    )
+    trial_plan = models.ForeignKey(
+        'TrialPlan',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='application_oblast_states',
+        help_text='Связанный план испытаний',
+    )
+    trial = models.ForeignKey(
+        'Trial',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='application_oblast_states',
+        help_text='Связанное испытание',
+    )
+    decision_date = models.DateField(
+        null=True,
+        blank=True,
+        help_text='Дата решения',
+    )
+    decision_justification = models.TextField(
+        null=True,
+        blank=True,
+        help_text='Обоснование решения',
+    )
+    decided_by = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='application_oblast_state_decisions',
+        help_text='Кто принял решение',
+    )
+    decision_year = models.IntegerField(
+        null=True,
+        blank=True,
+        help_text='Год решения',
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = 'Состояние заявки по области'
+        verbose_name_plural = 'Состояния заявок по областям'
+        ordering = ['application', 'oblast__name']
+        unique_together = [['application', 'oblast', 'is_deleted']]
+        indexes = [
+            models.Index(fields=['application', 'oblast', 'is_deleted']),
+            models.Index(fields=['status', 'is_deleted']),
+        ]
+
+    def __str__(self):
+        return f"{self.application.application_number} - {self.oblast.name}: {self.get_status_display()}"
 
 
 class PlannedDistribution(SoftDeleteModel):
@@ -1451,6 +1575,11 @@ class Trial(SoftDeleteModel):
         ('lab_sample_sent', 'Образец в лаборатории'),
         ('lab_completed', 'Лабораторный анализ завершен'),
         ('completed', 'Завершено'),
+    ]
+    DECISION_CHOICES = [
+        ('approved', 'Одобрено'),
+        ('continue', 'Продолжить'),
+        ('rejected', 'Отклонено'),
     ]
     
     region = models.ForeignKey(Region, on_delete=models.CASCADE, related_name='trials')
@@ -1691,6 +1820,38 @@ class Trial(SoftDeleteModel):
         blank=True,
         null=True,
         help_text="ФИО ответственного сортопыта"
+    )
+
+    # Решение по испытанию
+    decision = models.CharField(
+        max_length=20,
+        choices=DECISION_CHOICES,
+        blank=True,
+        null=True,
+        help_text='Решение комиссии по испытанию',
+    )
+    decision_justification = models.TextField(
+        blank=True,
+        null=True,
+        help_text='Обоснование решения',
+    )
+    decision_recommendations = models.TextField(
+        blank=True,
+        null=True,
+        help_text='Рекомендации комиссии',
+    )
+    decision_date = models.DateField(
+        blank=True,
+        null=True,
+        help_text='Дата принятия решения',
+    )
+    decided_by = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='decided_trials',
+        help_text='Кто принял решение',
     )
     
     

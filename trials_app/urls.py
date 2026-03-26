@@ -6,6 +6,7 @@ router = DefaultRouter()
 # Роутер для оригинаторов в patents
 patents_router = DefaultRouter()
 patents_router.register(r'ariginators', views.OriginatorViewSet, basename='patent-originator')
+patents_router.register(r'originators', views.OriginatorViewSet, basename='patent-originator-alias')
 # Справочники Trials
 router.register(r'oblasts', views.OblastViewSet)
 router.register(r'climate-zones', views.ClimateZoneViewSet)
@@ -51,6 +52,7 @@ urlpatterns = [
     
     # Группы культур (справочник)
     path('patents/group-cultures/', views.get_group_cultures, name='get-group-cultures'),
+    path('patents/group-cultures/<int:group_id>/', views.get_group_culture_detail, name='get-group-culture-detail'),
     path('patents/group-cultures/create/', views.create_group_culture, name='create-group-culture'),
     
     # Культуры (справочник)

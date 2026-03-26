@@ -3,8 +3,12 @@ from .models import (
     Oblast, Region, ClimateZone, Indicator, GroupCulture, Culture, Originator, SortOriginator, SortOblast, SortRecord,
     Application, PlannedDistribution, TrialType, Trial, TrialParticipant, TrialResult,
     TrialLaboratoryResult, Document, TrialPlan, TrialPlanParticipant, TrialPlanTrial, TrialPlanCulture,
+    APPLICATION_MANDATORY_DOCUMENT_TYPES,
+    ApplicationDecisionHistory,
     AnnualDecisionTable, AnnualDecisionItem
 )
+from .services import WorkflowService
+from .storage import get_document_file_url
 
 
 # ============================================================================
@@ -415,13 +419,12 @@ class ApplicationSerializer(serializers.ModelSerializer):
             is_deleted=False
         )
         
-        # В модели Trial нет поля decision, поэтому возвращаем базовую статистику
         return {
             'total': trials.count(),
-            'with_decision': 0,  # Поле decision не существует в Trial
-            'approved': 0,
-            'continue': 0,
-            'rejected': 0,
+            'with_decision': trials.exclude(decision__isnull=True).exclude(decision='').count(),
+            'approved': trials.filter(decision='approved').count(),
+            'continue': trials.filter(decision='continue').count(),
+            'rejected': trials.filter(decision='rejected').count(),
         }
     
     def get_missing_mandatory_documents(self, obj):
@@ -466,11 +469,99 @@ class ApplicationSerializer(serializers.ModelSerializer):
     
     def validate(self, data):
         """Проверка что указан либо sort_id, либо sort_record"""
-        if not data.get('sort_id') and not data.get('sort_record'):
+        if (
+            not data.get('sort_id')
+            and not data.get('sort_record')
+            and not getattr(self.instance, 'sort_record_id', None)
+        ):
             raise serializers.ValidationError({
                 'sort_id': 'Необходимо указать sort_id (ID из Patents Service) или sort_record'
             })
+
+        if self.instance is not None:
+            self._validate_sort_change(data)
+            self._validate_removed_target_oblasts(data)
+
         return data
+
+    def _validate_sort_change(self, data):
+        current_patents_sort_id = getattr(self.instance.sort_record, 'sort_id', None)
+        next_patents_sort_id = data.get('sort_id')
+        next_sort_record = data.get('sort_record')
+
+        sort_changed = False
+        if next_patents_sort_id is not None:
+            sort_changed = next_patents_sort_id != current_patents_sort_id
+        elif next_sort_record is not None:
+            sort_changed = next_sort_record.id != self.instance.sort_record_id
+
+        if not sort_changed:
+            return
+
+        blockers = []
+        if self.instance.trial_participations.filter(is_deleted=False).exists():
+            blockers.append('по заявке уже созданы связанные испытания')
+        if ApplicationDecisionHistory.objects.filter(application=self.instance).exists():
+            blockers.append('по заявке уже есть история решений')
+
+        if blockers:
+            raise serializers.ValidationError({
+                'sort_id': (
+                    'Нельзя изменить сорт: '
+                    + '; '.join(blockers)
+                    + '.'
+                )
+            })
+
+    def _validate_removed_target_oblasts(self, data):
+        if 'target_oblasts' not in data:
+            return
+
+        next_oblast_ids = {
+            oblast.id if hasattr(oblast, 'id') else int(oblast)
+            for oblast in data['target_oblasts']
+        }
+        current_oblast_ids = set(self.instance.target_oblasts.values_list('id', flat=True))
+        removed_oblast_ids = current_oblast_ids - next_oblast_ids
+
+        if not removed_oblast_ids:
+            return
+
+        blocked_oblast_ids = set(
+            PlannedDistribution.objects.filter(
+                application=self.instance,
+                region__oblast_id__in=removed_oblast_ids,
+                is_deleted=False,
+            ).values_list('region__oblast_id', flat=True)
+        )
+        blocked_oblast_ids.update(
+            ApplicationDecisionHistory.objects.filter(
+                application=self.instance,
+                oblast_id__in=removed_oblast_ids,
+            ).values_list('oblast_id', flat=True)
+        )
+        blocked_oblast_ids.update(
+            TrialParticipant.objects.filter(
+                application=self.instance,
+                is_deleted=False,
+                trial__is_deleted=False,
+                trial__region__oblast_id__in=removed_oblast_ids,
+            ).values_list('trial__region__oblast_id', flat=True)
+        )
+
+        if not blocked_oblast_ids:
+            return
+
+        blocked_names = list(
+            Oblast.objects.filter(id__in=blocked_oblast_ids).values_list('name', flat=True)
+        )
+        raise serializers.ValidationError({
+            'target_oblasts': (
+                'Нельзя удалить области, по которым уже создан workflow: '
+                + ', '.join(sorted(blocked_names))
+                + '.'
+            )
+        })
     
     def create(self, validated_data):
         """Автоматически создать SortRecord если передан sort_id"""
@@ -501,12 +592,18 @@ class ApplicationSerializer(serializers.ModelSerializer):
             
             validated_data['sort_record'] = sort_record
         
-        return super().create(validated_data)
+        instance = super().create(validated_data)
+        instance.ensure_oblast_states()
+        instance._update_overall_status()
+        return instance
     
     def update(self, instance, validated_data):
         """Автоматически обновить SortRecord если передан sort_id"""
         from django.utils import timezone
         from datetime import timedelta
+        from django.utils import timezone as django_timezone
+
+        previous_target_oblast_ids = set(instance.target_oblasts.values_list('id', flat=True))
         
         sort_id = validated_data.pop('sort_id', None)
         
@@ -532,7 +629,45 @@ class ApplicationSerializer(serializers.ModelSerializer):
             
             validated_data['sort_record'] = sort_record
         
-        return super().update(instance, validated_data)
+        instance = super().update(instance, validated_data)
+        current_target_oblast_ids = set(instance.target_oblasts.values_list('id', flat=True))
+        removed_oblast_ids = previous_target_oblast_ids - current_target_oblast_ids
+        if removed_oblast_ids:
+            instance.oblast_states.filter(
+                oblast_id__in=removed_oblast_ids,
+                is_deleted=False,
+            ).update(
+                is_deleted=True,
+                deleted_at=django_timezone.now(),
+            )
+        instance.ensure_oblast_states()
+        instance._update_overall_status()
+        return instance
+
+
+class ApplicationSubmissionDocumentMetaSerializer(serializers.Serializer):
+    title = serializers.CharField(max_length=255)
+    document_type = serializers.ChoiceField(choices=Document.DOCUMENT_TYPES)
+    is_mandatory = serializers.BooleanField(required=False, default=False)
+
+    def validate(self, attrs):
+        attrs['is_mandatory'] = (
+            attrs['document_type'] in APPLICATION_MANDATORY_DOCUMENT_TYPES
+            or attrs.get('is_mandatory', False)
+        )
+        return attrs
+
+
+class DocumentFileField(serializers.FileField):
+    def to_representation(self, value):
+        document = getattr(value, 'instance', None)
+        if document is None:
+            document = getattr(self.parent, 'instance', None)
+        if document is None:
+            return None
+
+        request = self.parent.context.get('request') if hasattr(self.parent, 'context') else None
+        return get_document_file_url(document, request=request)
 
 
 class TrialParticipantSerializer(serializers.ModelSerializer):
@@ -576,7 +711,7 @@ class TrialParticipantSerializer(serializers.ModelSerializer):
 
 
 class TrialSerializer(serializers.ModelSerializer):
-    application_number = serializers.CharField(source='application.application_number', read_only=True)
+    application_number = serializers.SerializerMethodField()
     sort_record_data = serializers.SerializerMethodField()
     region_name = serializers.CharField(source='region.name', read_only=True)
     oblast_name = serializers.CharField(source='region.oblast.name', read_only=True)
@@ -614,6 +749,15 @@ class TrialSerializer(serializers.ModelSerializer):
         sort_record = obj.get_sort_record()
         if sort_record:
             return SortRecordSerializer(sort_record).data
+        return None
+
+    def get_application_number(self, obj):
+        participant = obj.participants.filter(
+            application__isnull=False,
+            is_deleted=False,
+        ).select_related('application').first()
+        if participant and participant.application:
+            return participant.application.application_number
         return None
     
     def get_results_count(self, obj):
@@ -790,34 +934,7 @@ class TrialSerializer(serializers.ModelSerializer):
                     'participants': error_messages
                 })
         
-        # АВТОМАТИЧЕСКОЕ ОБНОВЛЕНИЕ СТАТУСА ЗАЯВКИ И PlannedDistribution:
-        application_ids = set()
-        for p_data in participants_data:
-            if p_data.get('application'):
-                application_ids.add(p_data['application'])
-        
-        if application_ids:
-            from trials_app.models import Application, PlannedDistribution
-            
-            # Обновляем общий статус заявки
-            Application.objects.filter(
-                id__in=application_ids,
-                status='distributed'  # Только если была distributed
-            ).update(status='in_progress')
-            
-            # Обновляем PlannedDistribution (многолетние испытания)
-            for app_id in application_ids:
-                planned_dist = PlannedDistribution.objects.filter(
-                    application_id=app_id,
-                    region=trial.region
-                ).first()
-                
-                if planned_dist:
-                    # Если первый Trial для этого PlannedDistribution
-                    if planned_dist.status == 'planned':
-                        planned_dist.status = 'in_progress'
-                        planned_dist.year_started = trial.year or (trial.start_date.year if trial.start_date else None)
-                        planned_dist.save()
+        WorkflowService.sync_trial_progress(trial)
         
         return trial
 
@@ -943,6 +1060,7 @@ class TrialLaboratoryResultSerializer(serializers.ModelSerializer):
 
 
 class DocumentSerializer(serializers.ModelSerializer):
+    file = DocumentFileField(required=False, allow_null=True)
     application_number = serializers.CharField(source='application.application_number', read_only=True, allow_null=True)
     uploaded_by_name = serializers.CharField(source='uploaded_by.username', read_only=True)
     document_type_display = serializers.CharField(source='get_document_type_display', read_only=True)
@@ -953,6 +1071,21 @@ class DocumentSerializer(serializers.ModelSerializer):
         extra_kwargs = {
             'uploaded_by': {'read_only': True}  # Устанавливается автоматически
         }
+
+    def validate(self, attrs):
+        application = attrs.get('application', getattr(self.instance, 'application', None))
+        trial = attrs.get('trial', getattr(self.instance, 'trial', None))
+
+        if bool(application) == bool(trial):
+            raise serializers.ValidationError(
+                'Exactly one of "application" or "trial" must be provided.'
+            )
+
+        document_type = attrs.get('document_type', getattr(self.instance, 'document_type', None))
+        if document_type in APPLICATION_MANDATORY_DOCUMENT_TYPES:
+            attrs['is_mandatory'] = True
+
+        return attrs
 
 
 class TrialPlanWriteSerializer(serializers.ModelSerializer):
@@ -1010,10 +1143,11 @@ class TrialPlanSerializer(serializers.ModelSerializer):
     # Новая структура ответа (только для чтения)
     oblast = serializers.SerializerMethodField()
     cultures = serializers.SerializerMethodField()
+    created_by = serializers.IntegerField(source='created_by.id', read_only=True)
     
     class Meta:
         model = TrialPlan
-        fields = ['id', 'year', 'oblast', 'cultures']
+        fields = ['id', 'year', 'oblast', 'status', 'cultures', 'created_by', 'created_at', 'updated_at']
     
     def get_oblast(self, obj):
         """Получить область"""
@@ -1089,6 +1223,7 @@ class TrialPlanSerializer(serializers.ModelSerializer):
                     'id': tt.id,
                     'trial_type_id': tt.trial_type.id,
                     'trial_type_name': tt.trial_type.name,
+                    'trial_type_code': tt.trial_type.code,
                     'season': tt.season,
                     'participants': participants_list,
                     'created_by': tt.created_by.id,
@@ -1399,13 +1534,14 @@ class TrialPlanAddParticipantsSerializer(serializers.Serializer):
 class TrialPlanCultureSerializer(serializers.ModelSerializer):
     """Сериализатор для связи плана с культурой"""
     
+    patents_culture_id = serializers.IntegerField(source='culture.culture_id', read_only=True)
     culture_name = serializers.CharField(source='culture.name', read_only=True)
     culture_group = serializers.CharField(source='culture.group_culture.name', read_only=True)
     
     class Meta:
         model = TrialPlanCulture
         fields = [
-            'id', 'culture', 'culture_name', 'culture_group', 
+            'id', 'culture', 'patents_culture_id', 'culture_name', 'culture_group',
             'created_by', 'created_at', 'updated_at'
         ]
         extra_kwargs = {

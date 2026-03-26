@@ -1,0 +1,79 @@
+services:
+  trials-db:
+    image: postgres:14-alpine
+    container_name: trials_postgres
+    restart: unless-stopped
+    env_file:
+      - env/db
+    volumes:
+      - trials_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-admin} -d ${POSTGRES_DB:-trials_db}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - internal
+
+  minio:
+    image: minio/minio:latest
+    container_name: trials_minio
+    restart: unless-stopped
+    env_file:
+      - env/app
+    command: server /data --console-address ":9001"
+    volumes:
+      - trials_minio_data:/data
+    ports:
+      - "127.0.0.1:${MINIO_CONSOLE_PORT:-9001}:9001"
+    networks:
+      - internal
+
+  minio-init:
+    image: minio/mc:latest
+    container_name: trials_minio_init
+    env_file:
+      - env/app
+    depends_on:
+      minio:
+        condition: service_started
+    volumes:
+      - ./scripts/init-minio.sh:/scripts/init-minio.sh:ro
+    entrypoint: ["/bin/sh", "/scripts/init-minio.sh"]
+    networks:
+      - internal
+
+  trials_service:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: trials_service
+    restart: unless-stopped
+    env_file:
+      - env/app
+    environment:
+      - MODE=prod
+    volumes:
+      - ${TRIALS_MEDIA_HOST_PATH:-/root/patents/volumes/media}:/usr/src/app/media
+      - ${TRIALS_LEGACY_MEDIA_HOST_PATH:-/root/patents/volumes/media}:/usr/src/app/legacy-media:ro
+    ports:
+      - "8001:8001"
+    depends_on:
+      trials-db:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
+    networks:
+      internal:
+      shared:
+        aliases:
+          - trials-api
+
+volumes:
+  trials_postgres_data:
+  trials_minio_data:
+
+networks:
+  internal:
+  shared:
+    name: patents_shared

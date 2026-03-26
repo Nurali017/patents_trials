@@ -1,15 +1,13 @@
 import os
 from pathlib import Path
 
-BASE_DIR = Path(__file__).resolve().parent.parent
+BASE_DIR = Path(__file__).resolve().parent.parent.parent
 
-SECRET_KEY = os.environ.get('SECRET_KEY', 'trials-secret-key-change-in-production')
-DEBUG = True
-ALLOWED_HOSTS = ['*']
+ALLOWED_HOSTS = []
 
 # Настройки для работы за HTTPS прокси
 SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
-SECURE_SSL_REDIRECT = False  # Не перенаправлять, так как nginx уже обрабатывает HTTPS
+SECURE_SSL_REDIRECT = False
 USE_TLS = True
 
 INSTALLED_APPS = [
@@ -20,20 +18,20 @@ INSTALLED_APPS = [
     'django.contrib.messages',
     'django.contrib.staticfiles',
     'django.contrib.postgres',
-    
+
     'rest_framework',
     'rest_framework.authtoken',
     'drf_yasg',
     'django_filters',
     'corsheaders',
-    
-    # Независимый микросервис - используем стандартные модели Django
+    'storages',
+
     'trials_app',
 ]
 
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
-    'whitenoise.middleware.WhiteNoiseMiddleware',  # Раздача статики
+    'whitenoise.middleware.WhiteNoiseMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'corsheaders.middleware.CorsMiddleware',
     'django.middleware.common.CommonMiddleware',
@@ -63,20 +61,12 @@ TEMPLATES = [
 
 WSGI_APPLICATION = 'trials.wsgi.application'
 
-# НАСТРОЙКИ БД - ОТДЕЛЬНАЯ БД ДЛЯ TRIALS SERVICE
-DATABASES = {
-    'default': {
-        'ENGINE': os.environ.get('SQL_ENGINE', 'django.db.backends.postgresql'),
-        'NAME': os.environ.get('SQL_DATABASE', 'trials_db'),  # Своя отдельная БД!
-        'USER': os.environ.get('SQL_USER', 'admin'),
-        'PASSWORD': os.environ.get('SQL_PASSWORD', 'qwe1daSjewspds12'),
-        'HOST': os.environ.get('SQL_HOST', 'trials-db'),
-        'PORT': os.environ.get('SQL_PORT', '5432'),
-    }
-}
+CORS_ALLOW_CREDENTIALS = True
 
-# Используем стандартную модель Django User (независимый микросервис)
-# AUTH_USER_MODEL по умолчанию 'auth.User'
+INTERNAL_IPS = [
+    '127.0.0.1',
+    'localhost'
+]
 
 REST_FRAMEWORK = {
     'DEFAULT_RENDERER_CLASSES': (
@@ -86,30 +76,12 @@ REST_FRAMEWORK = {
     'PAGE_SIZE': 1000,
     'DEFAULT_AUTHENTICATION_CLASSES': [
         'rest_framework.authentication.TokenAuthentication',
-        'rest_framework.authentication.SessionAuthentication',  # Для Swagger
+        'rest_framework.authentication.SessionAuthentication',
     ],
     'DEFAULT_PERMISSION_CLASSES': [
-        'rest_framework.permissions.AllowAny',  # Временно для разработки
+        'rest_framework.permissions.IsAuthenticated',
     ],
 }
-
-# CORS - разрешаем оба фронтенда
-CORS_ALLOWED_ORIGINS = [
-    "http://localhost:4200",  # Angular trials frontend
-    "http://localhost:3000",  # React trials frontend
-    "http://localhost:3001",  # React trials frontend (альтернативный порт)
-    "http://localhost:4201",  # Angular patents frontend (если другой порт)
-]
-
-CORS_ALLOW_CREDENTIALS = True
-
-if DEBUG:
-    CORS_ALLOW_ALL_ORIGINS = True
-
-INTERNAL_IPS = [
-    '127.0.0.1',
-    'localhost'
-]
 
 SWAGGER_SETTINGS = {
     'SECURITY_DEFINITIONS': {
@@ -119,10 +91,9 @@ SWAGGER_SETTINGS = {
             'in': 'header'
         }
     },
-    'USE_SESSION_AUTH': False,  # Отключить session auth для Swagger
-    'LOGIN_URL': None,  # Отключить редирект на логин
+    'USE_SESSION_AUTH': False,
+    'LOGIN_URL': None,
     'LOGOUT_URL': None,
-    # Упростим генерацию схемы и исключим дубликаты параметров
     'DEFAULT_AUTO_SCHEMA_CLASS': 'trials.swagger.NoFilterAutoSchema',
 }
 
@@ -131,21 +102,33 @@ TIME_ZONE = 'Asia/Almaty'
 USE_I18N = True
 USE_L10N = True
 USE_TZ = True
+TEST_NON_SERIALIZED_APPS = ['trials_app']
 
-# Отключить редирект на логин для Swagger (режим разработки)
 LOGIN_URL = None
 LOGOUT_URL = None
 
 STATIC_URL = '/static/'
 STATIC_ROOT = os.path.join(BASE_DIR, 'staticfiles')
 
-# WhiteNoise configuration для правильной раздачи статики
 STATICFILES_STORAGE = 'whitenoise.storage.CompressedManifestStaticFilesStorage'
 
+MEDIA_BACKEND = os.environ.get('MEDIA_BACKEND', 'filesystem').strip().lower() or 'filesystem'
 MEDIA_URL = '/media/'
 MEDIA_ROOT = os.path.join(BASE_DIR, 'media')
+LEGACY_MEDIA_ROOT = os.environ.get('LEGACY_MEDIA_ROOT', MEDIA_ROOT)
 
-# Логирование
+MINIO_ENDPOINT = os.environ.get('MINIO_ENDPOINT', 'http://minio:9000')
+MINIO_BUCKET = os.environ.get('MINIO_BUCKET', 'trials-media')
+MINIO_REGION = os.environ.get('MINIO_REGION', 'us-east-1')
+MINIO_ACCESS_KEY = os.environ.get('MINIO_ACCESS_KEY', '')
+MINIO_SECRET_KEY = os.environ.get('MINIO_SECRET_KEY', '')
+MINIO_PRESIGNED_URL_EXPIRY_SECONDS = int(
+    os.environ.get('MINIO_PRESIGNED_URL_EXPIRY_SECONDS', '600')
+)
+
+if MEDIA_BACKEND == 'minio':
+    DEFAULT_FILE_STORAGE = 'trials_app.storage.MinioMediaStorage'
+
 LOGGING = {
     'version': 1,
     'disable_existing_loggers': False,
@@ -228,14 +211,10 @@ EVALUATION_THRESHOLDS = {
         'critical_indicators': ['lodging_resistance', 'winter_hardiness']
     },
     'yield': {
-        # Согласно методике: ≥8% → допуск к реестру
         'deviation_significant_positive': 8.0,
-        # 3-8% → требуется анализ качества и устойчивости
         'deviation_moderate_positive': 3.0,
-        # Пороги для отрицательных отклонений
         'deviation_moderate_negative': -3.0,
         'deviation_significant_negative': -8.0,
-        # Статистическая значимость (% регионов с превышением)
         'statistical_significance_threshold': 50.0,
     },
     'violations': {

@@ -1,11 +1,14 @@
 """
 Document ViewSets
 """
-from rest_framework import viewsets, permissions, status
+import logging
+
+from django.http import HttpResponseRedirect
+from rest_framework import viewsets, permissions, status, parsers
 from rest_framework.decorators import action, api_view, permission_classes
 from rest_framework.response import Response
 from django.utils import timezone
-from django.db import models as django_models
+from django.db import models as django_models, transaction
 
 from ..models import (
     Oblast, Region, ClimateZone, Indicator, GroupCulture, Culture,
@@ -26,6 +29,20 @@ from ..serializers import (
     create_quality_trial_results
 )
 from ..patents_integration import patents_api
+from ..services import PatentsCatalogService
+from ..storage import (
+    build_signed_download_url,
+    get_document_file_name,
+    is_storage_error,
+    legacy_file_exists,
+    primary_file_exists,
+    stream_legacy_file,
+    stream_primary_file,
+    uses_minio_storage,
+    validate_signed_download_token,
+)
+
+logger = logging.getLogger(__name__)
 
 
 class DocumentViewSet(viewsets.ModelViewSet):
@@ -33,6 +50,7 @@ class DocumentViewSet(viewsets.ModelViewSet):
     queryset = Document.objects.filter(is_deleted=False)
     serializer_class = DocumentSerializer
     permission_classes = [permissions.IsAuthenticated]  # Требуется авторизация
+    parser_classes = [parsers.MultiPartParser, parsers.FormParser, parsers.JSONParser]
     
     def get_queryset(self):
         """Фильтрация по application или trial"""
@@ -48,6 +66,65 @@ class DocumentViewSet(viewsets.ModelViewSet):
             queryset = queryset.filter(trial_id=trial_id)
         
         return queryset
+
+    def create(self, request, *args, **kwargs):
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        try:
+            with transaction.atomic():
+                self.perform_create(serializer)
+        except Exception as exc:
+            if not is_storage_error(exc):
+                raise
+            logger.exception(
+                'Document upload failed application_id=%s trial_id=%s document_type=%s',
+                request.data.get('application'),
+                request.data.get('trial'),
+                request.data.get('document_type'),
+            )
+            return Response(
+                {
+                    'error': 'Document storage is unavailable. Please try again later.',
+                    'code': 'storage_unavailable',
+                },
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+        headers = self.get_success_headers(serializer.data)
+        return Response(serializer.data, status=status.HTTP_201_CREATED, headers=headers)
+
+    def update(self, request, *args, **kwargs):
+        partial = kwargs.pop('partial', False)
+        instance = self.get_object()
+        serializer = self.get_serializer(instance, data=request.data, partial=partial)
+        serializer.is_valid(raise_exception=True)
+
+        try:
+            with transaction.atomic():
+                self.perform_update(serializer)
+        except Exception as exc:
+            if not is_storage_error(exc):
+                raise
+            logger.exception(
+                'Document update failed document_id=%s application_id=%s trial_id=%s document_type=%s',
+                instance.id,
+                request.data.get('application', getattr(instance, 'application_id', None)),
+                request.data.get('trial', getattr(instance, 'trial_id', None)),
+                request.data.get('document_type', getattr(instance, 'document_type', None)),
+            )
+            return Response(
+                {
+                    'error': 'Document storage is unavailable. Please try again later.',
+                    'code': 'storage_unavailable',
+                },
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+        if getattr(instance, '_prefetched_objects_cache', None):
+            instance._prefetched_objects_cache = {}
+
+        return Response(serializer.data)
     
     def perform_create(self, serializer):
         """При создании документа устанавливаем uploaded_by автоматически"""
@@ -62,44 +139,113 @@ class DocumentViewSet(viewsets.ModelViewSet):
         
         Возвращает файл для скачивания
         """
-        from django.http import FileResponse, Http404
-        import os
-        
         document = self.get_object()
-        
-        if not document.file:
-            return Response({
-                'error': 'Document has no file attached'
-            }, status=404)
-        
-        try:
-            file_path = document.file.path
-            if not os.path.exists(file_path):
-                return Response({
-                    'error': 'File not found on server'
-                }, status=404)
-            
-            # Открываем файл и возвращаем как attachment
-            response = FileResponse(
-                open(file_path, 'rb'),
-                as_attachment=True,
-                filename=os.path.basename(file_path)
+
+        file_name = get_document_file_name(document)
+        if not file_name:
+            return Response(
+                {
+                    'error': 'Document has no file attached',
+                    'code': 'file_not_found',
+                },
+                status=status.HTTP_404_NOT_FOUND,
             )
-            return response
+
+        try:
+            if uses_minio_storage() and primary_file_exists(file_name):
+                return HttpResponseRedirect(build_signed_download_url(document, request=request))
+
+            if primary_file_exists(file_name):
+                return stream_primary_file(document)
+
+            if legacy_file_exists(file_name):
+                return stream_legacy_file(document)
+
+            return Response(
+                {
+                    'error': 'File not found on server',
+                    'code': 'file_not_found',
+                },
+                status=status.HTTP_404_NOT_FOUND,
+            )
         except Exception as e:
-            return Response({
-                'error': f'Error downloading file: {str(e)}'
-            }, status=500)
+            logger.exception('Error downloading document id=%s', document.id)
+            return Response(
+                {
+                    'error': 'Document storage is unavailable. Please try again later.',
+                    'code': 'storage_unavailable',
+                },
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+    @action(
+        detail=True,
+        methods=['get'],
+        url_path='signed-download',
+        permission_classes=[permissions.AllowAny],
+    )
+    def signed_download(self, request, pk=None):
+        document = Document.objects.filter(pk=pk, is_deleted=False).first()
+        if document is None:
+            return Response(
+                {
+                    'error': 'Document not found',
+                    'code': 'file_not_found',
+                },
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        file_name = get_document_file_name(document)
+        if not file_name:
+            return Response(
+                {
+                    'error': 'Document has no file attached',
+                    'code': 'file_not_found',
+                },
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        if not request.user.is_authenticated:
+            token = request.query_params.get('token')
+            if not validate_signed_download_token(document, token):
+                return Response(
+                    {
+                        'error': 'Invalid or expired download token',
+                        'code': 'invalid_download_token',
+                    },
+                    status=status.HTTP_403_FORBIDDEN,
+                )
+
+        try:
+            if primary_file_exists(file_name):
+                return stream_primary_file(document)
+
+            if legacy_file_exists(file_name):
+                return stream_legacy_file(document)
+
+            return Response(
+                {
+                    'error': 'File not found on server',
+                    'code': 'file_not_found',
+                },
+                status=status.HTTP_404_NOT_FOUND,
+            )
+        except Exception:
+            logger.exception('Error serving signed document id=%s', document.id)
+            return Response(
+                {
+                    'error': 'Document storage is unavailable. Please try again later.',
+                    'code': 'storage_unavailable',
+                },
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
 
 
 @api_view(['GET'])
 @permission_classes([permissions.AllowAny])
 def get_cultures(request):
     """
-    Получить список всех культур из Patents Service
-    
-    Проксирует запрос к Patents Service для получения справочника культур.
-    Используется при создании/редактировании сортов.
+    Получить список культур из локального synced catalog.
     
     GET /api/v1/patents/cultures/
     
@@ -114,7 +260,14 @@ def get_cultures(request):
         GET /api/v1/patents/cultures/?search=пшеница  # Поиск по названию
         GET /api/v1/patents/cultures/?group=1&search=пшеница  # Комбинированная фильтрация
     """
-    cultures = patents_api.get_all_cultures(params=request.query_params.dict())
+    group = (
+        request.query_params.get('group')
+        or request.query_params.get('group_culture_id')
+        or request.query_params.get('culture_group')
+    )
+    search = request.query_params.get('search')
+
+    cultures = PatentsCatalogService.list_cultures(group=group, search=search)
     return Response(cultures)
 
 
@@ -122,35 +275,50 @@ def get_cultures(request):
 @permission_classes([permissions.AllowAny])
 def get_group_cultures(request):
     """
-    Получить список всех групп культур из Patents Service
-    
-    Проксирует запрос к Patents Service для получения справочника групп культур.
-    Используется при создании/редактировании культур и сортов.
+    Получить список групп культур из локального synced catalog.
     
     GET /api/v1/patents/group-cultures/
     
     Query params:
         - search: поиск по названию
     """
-    group_cultures = patents_api.get_all_group_cultures(params=request.query_params.dict())
+    search = request.query_params.get('search')
+    group_cultures = PatentsCatalogService.list_group_cultures(search=search)
     return Response(group_cultures)
+
+
+@api_view(['GET'])
+@permission_classes([permissions.AllowAny])
+def get_group_culture_detail(request, group_id):
+    """
+    Получить детальную информацию о группе культур из локального synced catalog.
+
+    GET /api/v1/patents/group-cultures/{id}/
+    """
+    group_culture = PatentsCatalogService.get_group_culture(group_id)
+    if group_culture:
+        return Response(group_culture)
+
+    return Response({
+        'error': f'Group culture {group_id} not found'
+    }, status=404)
 
 
 @api_view(['GET'])
 @permission_classes([permissions.AllowAny])
 def get_culture_detail(request, culture_id):
     """
-    Получить детальную информацию о культуре
+    Получить детальную информацию о культуре из локального synced catalog.
     
     GET /api/v1/patents/cultures/{id}/
     """
-    culture = patents_api.get_culture(culture_id)
+    culture = PatentsCatalogService.get_culture(culture_id)
     if culture:
         return Response(culture)
-    else:
-        return Response({
-            'error': f'Culture {culture_id} not found'
-        }, status=404)
+
+    return Response({
+        'error': f'Culture {culture_id} not found'
+    }, status=404)
 
 
 @api_view(['POST'])
@@ -453,8 +621,6 @@ def test_patents_connection(request):
             "message": "Successfully connected to Patents Service"
         }
     """
-    from .patents_integration import patents_api
-    
     result = {
         "status": "success",
         "patents_service_url": patents_api.base_url,
@@ -500,7 +666,3 @@ def test_patents_connection(request):
     
     status_code = 200 if result["status"] == "success" else (500 if result["status"] == "error" else 200)
     return Response(result, status=status_code)
-
-
-
-

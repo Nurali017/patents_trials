@@ -37,6 +37,7 @@ from .document import (
     DocumentViewSet,
     test_patents_connection,
     get_group_cultures,
+    get_group_culture_detail,
     create_group_culture,
     get_cultures,
     create_culture,
@@ -76,6 +77,7 @@ __all__ = [
     # API Functions
     'test_patents_connection',
     'get_group_cultures',
+    'get_group_culture_detail',
     'create_group_culture',
     'get_cultures',
     'create_culture',
