@@ -47,26 +47,6 @@ jobs:
           command_timeout: 30m
           script: |
             set -eu
-            backup_dir="/root/backups/trials"
-            timestamp="$(date +%Y%m%d_%H%M%S)"
-            repo_backup="${backup_dir}/trials_repo_${timestamp}.tgz"
-            db_backup="${backup_dir}/trials_db_${timestamp}.sql"
-
-            rollback() {
-              set +e
-              echo "Deploy failed. Restoring /root/trials-backend from ${repo_backup}"
-              docker compose -f /root/trials-backend/docker-compose.prod.yml down || true
-              rm -rf /root/trials-backend
-              tar -xzf "${repo_backup}" -C /root
-              cd /root/trials-backend
-              docker compose -f docker-compose.prod.yml up -d --build || true
-            }
-
-            trap 'rollback' ERR
-
-            mkdir -p "${backup_dir}"
-            tar -czf "${repo_backup}" -C /root trials-backend
-            docker exec trials_postgres sh -lc 'pg_dump -U "$POSTGRES_USER" "$POSTGRES_DB"' > "${db_backup}"
 
             if ! docker network inspect patents_shared >/dev/null 2>&1; then
               echo "Required shared network patents_shared is missing. Deploy patents-backend first."
@@ -95,8 +75,4 @@ jobs:
               exit 1
             fi
 
-            trap - ERR
-
             echo "Trials backend deployed successfully"
-            echo "Repo backup: ${repo_backup}"
-            echo "DB backup: ${db_backup}"
