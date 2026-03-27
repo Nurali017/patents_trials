@@ -1,5 +1,14 @@
 #!/bin/bash
 
+if command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; then
+    COMPOSE_CMD="docker compose"
+elif command -v docker-compose >/dev/null 2>&1; then
+    COMPOSE_CMD="docker-compose"
+else
+    echo "❌ Docker Compose не найден"
+    exit 1
+fi
+
 echo "🛑 Остановка Trials сервисов"
 echo "============================="
 echo ""
@@ -29,19 +38,19 @@ read -p "Выбор: " choice
 case $choice in
     1)
         echo "🛑 Остановка всех сервисов..."
-        docker-compose down
+        $COMPOSE_CMD down
         echo "✅ Все сервисы остановлены!"
         ;;
     2)
         echo "🛑 Остановка микросервиса..."
-        docker-compose stop trials-service
-        docker-compose rm -f trials-service
+        $COMPOSE_CMD stop trials_service
+        $COMPOSE_CMD rm -f trials_service
         echo "✅ Микросервис остановлен!"
         ;;
     3)
         echo "🛑 Остановка БД..."
-        docker-compose stop trials-db
-        docker-compose rm -f trials-db
+        $COMPOSE_CMD stop trials-db
+        $COMPOSE_CMD rm -f trials-db
         echo "✅ БД остановлена!"
         echo "⚠️  Внимание: данные сохранены в volume trials_postgres_data"
         ;;
@@ -50,7 +59,7 @@ case $choice in
         read -p "Вы уверены? (yes/no): " confirm
         if [ "$confirm" = "yes" ]; then
             echo "🗑️  Остановка и удаление всех данных..."
-            docker-compose down -v
+            $COMPOSE_CMD down -v
             echo "✅ Все сервисы остановлены и данные удалены!"
         else
             echo "❌ Операция отменена"
@@ -64,7 +73,6 @@ case $choice in
         exit 1
         ;;
 esac
-
 
 
 

@@ -1,5 +1,13 @@
 #!/bin/bash
 
+if command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; then
+    COMPOSE_CMD="docker compose"
+elif command -v docker-compose >/dev/null 2>&1; then
+    COMPOSE_CMD="docker-compose"
+else
+    COMPOSE_CMD="docker compose"
+fi
+
 echo "📊 Статус Trials сервисов"
 echo "========================="
 echo ""
@@ -42,12 +50,12 @@ fi
 
 if docker ps | grep -q trials_service; then
     echo "✅ Микросервис запущен"
-    echo "   🌐 API: http://localhost:8001/api/"
+    echo "   🌐 API: http://localhost:8001/api/v1/"
     echo "   📚 Swagger: http://localhost:8001/swagger/"
     echo "   ⚙️  Admin: http://localhost:8001/admin/"
     
     # Проверяем доступность сервиса
-    if curl -s http://localhost:8001/api/ > /dev/null 2>&1; then
+    if curl -s http://localhost:8001/api/v1/ > /dev/null 2>&1; then
         echo "   🟢 Статус: Доступен"
     else
         echo "   🟡 Статус: Запускается..."
@@ -67,14 +75,11 @@ echo ""
 # Быстрые команды
 echo "💡 Быстрые команды:"
 echo "------------------"
-echo "   Запустить всё: ./start.sh или docker-compose up -d"
+echo "   Запустить всё: ./start.sh или $COMPOSE_CMD up -d"
 echo "   Запустить БД: ./start-db.sh"
 echo "   Запустить сервис: ./start-service.sh"
 echo "   Остановить: ./stop.sh"
-echo "   Логи: docker-compose logs -f"
-
-
-
+echo "   Логи: $COMPOSE_CMD logs -f"
 
 
 

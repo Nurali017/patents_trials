@@ -26,6 +26,7 @@ from ..serializers import (
     create_quality_trial_results
 )
 from ..patents_integration import patents_api
+from ..services import WorkflowService
 
 
 class TrialPlanViewSet(viewsets.ModelViewSet):
@@ -312,11 +313,12 @@ class TrialPlanViewSet(viewsets.ModelViewSet):
         
         # Работаем с моделями, а не с JSON
         participants = TrialPlanParticipant.objects.filter(
-            trial_plan=trial_plan,
+            culture_trial_type__trial_plan_culture__trial_plan=trial_plan,
             is_deleted=False
         ).prefetch_related('trials')
         
         created_distributions = []
+        created_distribution_models = []
         
         # Найти участников с заявками
         for participant in participants:
@@ -341,6 +343,7 @@ class TrialPlanViewSet(viewsets.ModelViewSet):
                             'notes': f'Created from plan {trial_plan.id}'
                         }
                     )
+                    created_distribution_models.append(planned_dist)
                     
                     if created:
                         created_distributions.append({
@@ -361,6 +364,7 @@ class TrialPlanViewSet(viewsets.ModelViewSet):
         # Обновить статус плана
         trial_plan.status = 'distributed'
         trial_plan.save()
+        WorkflowService.distribute_trial_plan(trial_plan, created_distribution_models)
         
         return Response({
             'success': True,
@@ -382,7 +386,7 @@ class TrialPlanViewSet(viewsets.ModelViewSet):
         
         # Получить участников из модели (не JSON)
         participants = TrialPlanParticipant.objects.filter(
-            trial_plan=trial_plan,
+            culture_trial_type__trial_plan_culture__trial_plan=trial_plan,
             is_deleted=False
         )
         
@@ -1096,17 +1100,7 @@ class TrialPlanViewSet(viewsets.ModelViewSet):
                 # Автоматически создать пустые результаты для основных показателей
                 create_basic_trial_results(trial_participant, request.user)
             
-            # Обновить статус заявок
-            application_ids = set()
-            for tp in created_participants:
-                if tp.application_id:
-                    application_ids.add(tp.application_id)
-            
-            if application_ids:
-                Application.objects.filter(
-                    id__in=application_ids,
-                    status='distributed'
-                ).update(status='in_progress')
+            WorkflowService.sync_trial_progress(trial)
             
             # Получить название предшественника для ответа
             if predecessor_culture_obj:
@@ -1330,7 +1324,5 @@ class TrialPlanViewSet(viewsets.ModelViewSet):
 # ============================================================================
 # ГОДОВЫЕ ОТЧЕТЫ И РЕШЕНИЯ (НОВАЯ ЛОГИКА)
 # ============================================================================
-
-
 
 

@@ -1,5 +1,14 @@
 #!/bin/bash
 
+if command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; then
+    COMPOSE_CMD="docker compose"
+elif command -v docker-compose >/dev/null 2>&1; then
+    COMPOSE_CMD="docker-compose"
+else
+    echo "❌ Docker Compose не найден"
+    exit 1
+fi
+
 echo "🚀 Управление Trials сервисом"
 echo "================================"
 echo ""
@@ -20,7 +29,7 @@ show_menu() {
 
 start_all() {
     echo "🚀 Запуск БД и Микросервиса..."
-    docker-compose up --build -d
+    $COMPOSE_CMD up --build -d
     echo ""
     echo "✅ Сервисы запущены!"
     show_info
@@ -28,11 +37,11 @@ start_all() {
 
 start_db_only() {
     echo "🗄️  Запуск только БД..."
-    docker-compose up -d trials-db
+    $COMPOSE_CMD up -d trials-db
     echo ""
     echo "✅ БД запущена!"
     echo "📊 PostgreSQL доступен на порту: 5433"
-    echo "🔗 Connection: postgresql://admin:qwe1daSjewspds12@localhost:5433/trials_db"
+    echo "🔗 Connection: postgresql://admin:(see env/db)@localhost:5433/trials_db"
 }
 
 start_service_only() {
@@ -44,7 +53,7 @@ start_service_only() {
     fi
     
     echo "🔧 Запуск Микросервиса..."
-    docker-compose up --build -d trials_service
+    $COMPOSE_CMD up --build -d trials_service
     echo ""
     echo "✅ Микросервис запущен!"
     show_info
@@ -52,13 +61,13 @@ start_service_only() {
 
 stop_all() {
     echo "🛑 Остановка всех сервисов..."
-    docker-compose down
+    $COMPOSE_CMD down
     echo "✅ Все сервисы остановлены!"
 }
 
 restart_all() {
     echo "🔄 Перезапуск всех сервисов..."
-    docker-compose restart
+    $COMPOSE_CMD restart
     echo "✅ Сервисы перезапущены!"
     show_info
 }
@@ -66,7 +75,7 @@ restart_all() {
 show_status() {
     echo "📊 Статус сервисов:"
     echo ""
-    docker-compose ps
+    $COMPOSE_CMD ps
 }
 
 show_logs() {
@@ -78,13 +87,13 @@ show_logs() {
     
     case $log_choice in
         1)
-            docker-compose logs -f trials_service
+            $COMPOSE_CMD logs -f trials_service
             ;;
         2)
-            docker-compose logs -f trials-db
+            $COMPOSE_CMD logs -f trials-db
             ;;
         3)
-            docker-compose logs -f
+            $COMPOSE_CMD logs -f
             ;;
         *)
             echo "❌ Неверный выбор"
@@ -96,7 +105,7 @@ show_info() {
     echo ""
     echo "📡 Информация о сервисах:"
     echo "=========================="
-    echo "🌐 API: http://localhost:8001/api/"
+    echo "🌐 API: http://localhost:8001/api/v1/"
     echo "📚 Swagger: http://localhost:8001/swagger/"
     echo "⚙️  Admin: http://localhost:8001/admin/"
     echo "🗄️  PostgreSQL: localhost:5433"

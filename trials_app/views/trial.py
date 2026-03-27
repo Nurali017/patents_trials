@@ -26,6 +26,7 @@ from ..serializers import (
     create_quality_trial_results
 )
 from ..patents_integration import patents_api
+from ..services import WorkflowService
 
 
 class TrialViewSet(viewsets.ModelViewSet):
@@ -154,40 +155,14 @@ class TrialViewSet(viewsets.ModelViewSet):
                 'error': 'Invalid decision. Must be: approved, continue, or rejected'
             }, status=400)
         
-        # Сохраняем решение
-        trial.decision = decision
-        trial.decision_justification = request.data.get('justification', '')
-        trial.decision_recommendations = request.data.get('recommendations', '')
-        trial.decision_date = request.data.get('decision_date', timezone.now().date())
-        trial.decided_by = request.user if request.user.is_authenticated else None
-        
-        # Обновляем статус испытания
-        trial.status = decision  # approved, continue, или rejected
-        trial.save()
-        
-        # АВТОМАТИЧЕСКОЕ ОБНОВЛЕНИЕ PlannedDistribution (многолетние испытания):
-        # Ищем PlannedDistribution через участников
-        from trials_app.models import TrialParticipant
-        participants_with_app = TrialParticipant.objects.filter(
-            trial=trial,
-            application__isnull=False,
-            is_deleted=False
-        ).select_related('application')
-        
-        for participant in participants_with_app:
-            planned_dist = PlannedDistribution.objects.filter(
-                application=participant.application,
-                region=trial.region,
-                status='in_progress'
-            ).first()
-            
-            if planned_dist:
-                # Финальное решение: approved или rejected → завершаем PlannedDistribution
-                if decision in ['approved', 'rejected']:
-                    planned_dist.status = decision  # approved или rejected
-                    planned_dist.year_completed = trial.year or (trial.start_date.year if trial.start_date else None)
-                    planned_dist.save()
-                # decision = 'continue' → оставляем in_progress (будет новый Trial в следующем году)
+        WorkflowService.record_trial_decision(
+            trial,
+            decision=decision,
+            justification=request.data.get('justification', ''),
+            recommendations=request.data.get('recommendations', ''),
+            decision_date=request.data.get('decision_date', timezone.now().date()),
+            decided_by=request.user if request.user.is_authenticated else None,
+        )
         
         return Response({
             'success': True,
@@ -226,6 +201,7 @@ class TrialViewSet(viewsets.ModelViewSet):
         trial.laboratory_notes = request.data.get('notes', '')
         trial.status = 'lab_sample_sent'
         trial.save()
+        WorkflowService.sync_trial_progress(trial)
         
         # АВТОМАТИЧЕСКИ СОЗДАТЬ КАЧЕСТВЕННЫЕ ПОКАЗАТЕЛИ ДЛЯ ЛАБОРАТОРИИ
         quality_results = create_quality_trial_results(trial, request.user)
@@ -360,16 +336,9 @@ class TrialViewSet(viewsets.ModelViewSet):
                 'error': f'Trial already has final decision. Current: {trial.status}'
             }, status=400)
         
-        # Обновляем статус
         trial.status = 'completed'
-        if 'completed_date' in request.data:
-            # Если пользователь хочет установить кастомную дату
-            from datetime.datetime import strptime
-            completed_date = request.data['completed_date']
-        else:
-            completed_date = None
-        
         trial.save()
+        WorkflowService.sync_trial_progress(trial)
         
         return Response({
             'success': True,
@@ -400,6 +369,7 @@ class TrialViewSet(viewsets.ModelViewSet):
         trial.laboratory_completed_date = request.data.get('completed_date', timezone.now().date())
         trial.status = 'lab_completed'
         trial.save()
+        WorkflowService.sync_trial_progress(trial)
         
         return Response({
             'success': True,
@@ -431,6 +401,7 @@ class TrialViewSet(viewsets.ModelViewSet):
         # Обновляем статус на финальный completed
         trial.status = 'completed'
         trial.save()
+        WorkflowService.sync_trial_progress(trial)
         
         return Response({
             'success': True,
@@ -901,6 +872,7 @@ class TrialViewSet(viewsets.ModelViewSet):
             trial.status = 'completed_008'
             trial.approval_date = timezone.now().date()
             trial.save()
+            WorkflowService.sync_trial_progress(trial)
             message = 'Форма 008 успешно отправлена. Полевые работы завершены.'
         else:
             message = 'Черновик формы 008 успешно сохранен'
@@ -1315,6 +1287,5 @@ class TrialViewSet(viewsets.ModelViewSet):
             'total_indicators': total_indicators,
             'message': f'Removed {removed_count} indicators from trial'
         })
-
 
 

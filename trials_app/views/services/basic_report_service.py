@@ -185,20 +185,20 @@ class BasicReportService:
                 # С УЧЕТОМ ПРЕДШЕСТВЕННИКА
                 composite_key = (group_code, predecessor_key)
                 region_standard = standards_by_group.get(composite_key)
-                if region_standard and trial_data.get('current_year_yield'):
-                    # Получить данные стандарта только за отчетный год
+                if region_standard and trial_data.get('average_yield'):
+                    # Получить данные стандарта за все годы для расчета среднего
                     # С ТЕМ ЖЕ ПРЕДШЕСТВЕННИКОМ
                     standard_data = self._get_trial_data_by_sort(
-                        region_standard, region, [year], group_code, predecessor_key
+                        region_standard, region, years_range, group_code, predecessor_key
                     )
 
-                    if standard_data.get('current_year_yield'):
-                        deviation = trial_data['current_year_yield'] - standard_data['current_year_yield']
-                        deviation_percent = (deviation / standard_data['current_year_yield']) * 100
+                    if standard_data.get('average_yield'):
+                        deviation = trial_data['average_yield'] - standard_data['average_yield']
+                        deviation_percent = (deviation / standard_data['average_yield']) * 100
                         trial_data['deviation_from_standard'] = round(deviation, 1)
                         trial_data['deviation_percent'] = round(deviation_percent, 1)
                         trial_data['standard_name'] = region_standard.name
-                        trial_data['standard_current_year_yield'] = standard_data['current_year_yield']
+                        trial_data['standard_average_yield'] = standard_data['average_yield']
                 
                 # Получить данные об устойчивости
                 resistance_indicators = self._get_resistance_indicators(app, region, years_range)

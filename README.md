@@ -164,7 +164,7 @@ SECRET_KEY=trials-secret-key-change-in-production
 SQL_ENGINE=django.db.backends.postgresql
 SQL_DATABASE=trials_db          # Своя БД, не patent!
 SQL_USER=admin
-SQL_PASSWORD=qwe1daSjewspds12
+SQL_PASSWORD=CHANGE_ME
 SQL_HOST=trials-db              # Docker container name
 SQL_PORT=5432                   # Внутренний порт (внешний 5433)
 
@@ -225,7 +225,7 @@ docker exec -it trials_service python manage.py createsuperuser
 docker exec -it trials_postgres psql -U admin -d trials_db
 
 # Локальный клиент (если установлен psql)
-psql postgresql://admin:qwe1daSjewspds12@localhost:5433/trials_db
+psql postgresql://admin:CHANGE_ME@localhost:5433/trials_db
 ```
 
 ### Проверка работоспособности

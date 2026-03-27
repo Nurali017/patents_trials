@@ -110,9 +110,9 @@ venv/
 ENV/
 env.bak/
 venv.bak/
+!env.example
 
 # Local development files
-.env dev
 .env.local
 .env.development
 .env.production
@@ -142,6 +142,7 @@ static/
 
 # Docker
 .dockerignore
+*.backup
 
 # IDE
 .vscode/

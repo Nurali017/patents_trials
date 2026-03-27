@@ -26,6 +26,7 @@ from ..serializers import (
     create_quality_trial_results
 )
 from ..patents_integration import patents_api
+from ..services import WorkflowService
 
 
 class TrialParticipantViewSet(viewsets.ModelViewSet):
@@ -88,32 +89,13 @@ class TrialParticipantViewSet(viewsets.ModelViewSet):
             trial.status = 'active'
             trial.save()
         
-        # АВТОМАТИЧЕСКОЕ ОБНОВЛЕНИЕ СТАТУСА ЗАЯВКИ И PlannedDistribution:
-        application_ids = set()
-        for participant in created_participants:
-            if participant.application_id:
-                application_ids.add(participant.application_id)
-        
-        if application_ids:
-            # Обновляем общий статус заявки
-            Application.objects.filter(
-                id__in=application_ids,
-                status='distributed'
-            ).update(status='in_progress')
-            
-            # Обновляем PlannedDistribution (многолетние испытания)
-            for app_id in application_ids:
-                planned_dist = PlannedDistribution.objects.filter(
-                    application_id=app_id,
-                    region=trial.region
-                ).first()
-                
-                if planned_dist:
-                    # Если первый Trial для этого PlannedDistribution
-                    if planned_dist.status == 'planned':
-                        planned_dist.status = 'in_progress'
-                        planned_dist.year_started = trial.year or (trial.start_date.year if trial.start_date else None)
-                        planned_dist.save()
+        WorkflowService.sync_trial_progress(trial)
+
+        application_ids = {
+            participant.application_id
+            for participant in created_participants
+            if participant.application_id
+        }
         
         serializer = TrialParticipantSerializer(created_participants, many=True)
         return Response({
@@ -123,7 +105,6 @@ class TrialParticipantViewSet(viewsets.ModelViewSet):
             'trial_status': trial.status,
             'updated_applications': list(application_ids)
         })
-
 
 
 

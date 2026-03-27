@@ -1,5 +1,14 @@
 #!/bin/bash
 
+if command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; then
+    COMPOSE_CMD="docker compose"
+elif command -v docker-compose >/dev/null 2>&1; then
+    COMPOSE_CMD="docker-compose"
+else
+    echo "❌ Docker Compose не найден"
+    exit 1
+fi
+
 echo "🔧 Запуск Trials микросервиса"
 echo "=============================="
 echo ""
@@ -10,7 +19,7 @@ if docker ps | grep -q trials_service; then
     docker ps | grep trials_service
     echo ""
     echo "📡 Сервис доступен по адресам:"
-    echo "   🌐 API: http://localhost:8001/api/"
+    echo "   🌐 API: http://localhost:8001/api/v1/"
     echo "   📚 Swagger: http://localhost:8001/swagger/"
     echo "   ⚙️  Admin: http://localhost:8001/admin/"
     exit 0
@@ -46,7 +55,7 @@ fi
 echo "✅ БД доступна!"
 echo ""
 echo "🚀 Запускаем микросервис..."
-docker-compose up --build -d trials_service
+$COMPOSE_CMD up --build -d trials_service
 
 # Ждем запуска сервиса
 echo "⏳ Ожидание запуска сервиса..."
@@ -56,7 +65,7 @@ sleep 3
 echo ""
 echo "📜 Логи запуска (Ctrl+C для выхода):"
 echo "===================================="
-docker-compose logs -f trials_service &
+$COMPOSE_CMD logs -f trials_service &
 LOGS_PID=$!
 
 # Ждем несколько секунд и показываем информацию
@@ -67,15 +76,12 @@ echo ""
 echo "✅ Микросервис запущен!"
 echo ""
 echo "📡 Сервис доступен по адресам:"
-echo "   🌐 API: http://localhost:8001/api/"
+echo "   🌐 API: http://localhost:8001/api/v1/"
 echo "   📚 Swagger: http://localhost:8001/swagger/"
 echo "   ⚙️  Admin: http://localhost:8001/admin/"
 echo ""
-echo "💡 Для просмотра логов: docker-compose logs -f trials_service"
-echo "💡 Для остановки: docker-compose stop trials_service"
-
-
-
+echo "💡 Для просмотра логов: $COMPOSE_CMD logs -f trials_service"
+echo "💡 Для остановки: $COMPOSE_CMD stop trials_service"
 
 
 

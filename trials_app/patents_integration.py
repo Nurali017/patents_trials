@@ -44,7 +44,8 @@ class PatentsServiceClient:
         self.api_v2_url = f"{self.base_url}/api/v2/patents"
         self.api_v1_url = f"{self.base_url}/api"
         self.api_url = self.api_v2_url  # По умолчанию v2
-        self.auth_url = f"{self.base_url}/api/v2/patents/auth/"
+        # Patents token auth is exposed on the v1 auth endpoint.
+        self.auth_url = f"{self.base_url}/api/v1/auth/"
         self.timeout = 5  # секунд
         self._token = None  # Кешируемый токен
         
