@@ -314,15 +314,17 @@ class SortRecordViewSet(viewsets.ModelViewSet):
         При обновлении сорта - обновляем в Patents Service и локально
         """
         from django.utils import timezone
-        
+
         sort = serializer.instance
         sort_data = serializer.validated_data.copy()
-        
-        # Подготавливаем данные для Patents Service
+
+        # Serializer maps 'code' field → 'public_code' via source='public_code',
+        # so validated_data uses 'public_code' as the key.
+        culture = sort_data.get('culture', sort.culture)
         patents_data = {
             'name': sort_data.get('name', sort.name),
-            'code': sort_data.get('code', sort.code),
-            'culture': sort_data.get('culture', sort.culture).culture_id if sort_data.get('culture', sort.culture) else None,
+            'code': sort_data.get('public_code', sort.public_code),
+            'culture': culture.culture_id if culture else None,
             'originators': [sort_data.get('originators')] if sort_data.get('originators') else [],
         }
         

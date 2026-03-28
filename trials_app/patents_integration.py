@@ -302,14 +302,15 @@ class PatentsServiceClient:
                     page = 2
                     
                     while next_url:
-                        page_data = self._make_request('GET', endpoint, params={'page': page})
+                        page_params = {**(params or {}), 'page': page}
+                        page_data = self._make_request('GET', endpoint, params=page_params)
                         if page_data and isinstance(page_data, dict):
                             all_results.extend(page_data.get('results', []))
                             next_url = page_data.get('next')
                             page += 1
                         else:
                             break
-                    
+
                     logger.info(f'Загружено {len(all_results)} культур')
                     return all_results
         
@@ -345,14 +346,15 @@ class PatentsServiceClient:
                     page = 2
                     
                     while next_url:
-                        page_data = self._make_request('GET', endpoint, params={'page': page})
+                        page_params = {**(params or {}), 'page': page}
+                        page_data = self._make_request('GET', endpoint, params=page_params)
                         if page_data and isinstance(page_data, dict):
                             all_results.extend(page_data.get('results', []))
                             next_url = page_data.get('next')
                             page += 1
                         else:
                             break
-                    
+
                     logger.info(f'Загружено {len(all_results)} групп культур')
                     return all_results
         
@@ -390,7 +392,8 @@ class PatentsServiceClient:
                     
                     while next_url:
                         logger.info(f'Загрузка страницы {page} оригинаторов...')
-                        page_data = self._make_request('GET', endpoint, params={'page': page})
+                        page_params = {**(params or {}), 'page': page}
+                        page_data = self._make_request('GET', endpoint, params=page_params)
                         if page_data and isinstance(page_data, dict):
                             all_results.extend(page_data.get('results', []))
                             next_url = page_data.get('next')
@@ -617,7 +620,8 @@ class PatentsServiceClient:
                     while next_url:
                         logger.info(f'Загрузка страницы {page}...')
                         # Запрос следующей страницы
-                        page_data = self._make_request('GET', endpoint, params={'page': page})
+                        page_params = {**(params or {}), 'page': page}
+                        page_data = self._make_request('GET', endpoint, params=page_params)
                         
                         if page_data and isinstance(page_data, dict):
                             all_results.extend(page_data.get('results', []))
@@ -661,7 +665,7 @@ class PatentsServiceClient:
         Returns:
             dict или None: Обновленный сорт
         """
-        return self._make_request('PUT', f'/sorts/{sort_id}/', json=sort_data)
+        return self._make_request('PATCH', f'/sorts/{sort_id}/', json=sort_data)
     
     def delete_sort(self, sort_id):
         """

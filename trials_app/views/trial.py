@@ -4,8 +4,14 @@ Trial ViewSets
 from rest_framework import viewsets, permissions, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
+from ..pagination import StandardPagination
+from rest_framework.filters import OrderingFilter
+from django_filters.rest_framework import DjangoFilterBackend
 from django.utils import timezone
 from django.db import models as django_models
+from django.db.models import Count, Q, Subquery, OuterRef, IntegerField, Value
+from django.db.models.functions import Coalesce
+from django.db.models.functions import Cast
 
 from ..models import (
     Oblast, Region, ClimateZone, Indicator, GroupCulture, Culture,
@@ -18,13 +24,15 @@ from ..serializers import (
     OblastSerializer, RegionSerializer, ClimateZoneSerializer,
     IndicatorSerializer, GroupCultureSerializer, CultureSerializer,
     OriginatorSerializer, SortRecordSerializer, ApplicationSerializer,
-    TrialTypeSerializer, TrialSerializer, TrialParticipantSerializer,
+    TrialTypeSerializer, TrialSerializer, TrialListSerializer,
+    TrialParticipantSerializer,
     TrialResultSerializer, TrialLaboratoryResultSerializer,
     DocumentSerializer, TrialPlanSerializer, TrialPlanWriteSerializer,
     TrialPlanAddParticipantsSerializer, TrialPlanCultureSerializer,
     TrialPlanAddCultureSerializer, create_basic_trial_results,
     create_quality_trial_results
 )
+from ..filters import TrialFilter
 from ..patents_integration import patents_api
 from ..services import WorkflowService
 
@@ -32,18 +40,125 @@ from ..services import WorkflowService
 class TrialViewSet(viewsets.ModelViewSet):
     """
     Управление испытаниями сортов
-    
+
     Сорта связываются через sort_id из Patents Service
     Культуры получаются через API (не хранятся локально)
+
+    Поддерживает фильтрацию, сортировку и пагинацию:
+    - Фильтрация по статусу (status): planned, active, completed_008, ...
+    - Фильтрация по области (oblast): ID области
+    - Фильтрация по ГСУ (region): ID ГСУ
+    - Фильтрация по типу испытания (trial_type): ID типа
+    - Фильтрация по культуре (culture): ID культуры
+    - Фильтрация по году (year): год проведения
+    - Поиск (search): по названию сорта, номеру заявки, ГСУ
+    - Сортировка (ordering): id, start_date, year, status, created_at, updated_at
+    - Пагинация: page, page_size (макс 100)
+
+    Примеры:
+    - GET /api/trials/?status=active&page=1&page_size=20
+    - GET /api/trials/?oblast=1&year=2026
+    - GET /api/trials/?search=пшеница&ordering=-created_at
     """
     queryset = Trial.objects.filter(is_deleted=False)
     serializer_class = TrialSerializer
-    
+
+    # Фильтрация и сортировка
+    filter_backends = [DjangoFilterBackend, OrderingFilter]
+    filterset_class = TrialFilter
+    ordering_fields = ['id', 'start_date', 'year', 'status', 'created_at', 'updated_at']
+    ordering = ['-id']
+
+    # Пагинация
+    pagination_class = StandardPagination
+
     def get_permissions(self):
         """Чтение, список сортов - всем, остальное - только авторизованным"""
-        if self.action in ['list', 'retrieve', 'available_sorts', 'form008', 'form008_statistics']:
+        if self.action in ['list', 'retrieve', 'available_sorts', 'form008', 'form008_statistics', 'statistics']:
             return [permissions.AllowAny()]
         return [permissions.IsAuthenticated()]
+
+    def get_serializer_class(self):
+        """Лёгкий сериализатор для списка, полный — для деталей"""
+        if self.action == 'list':
+            return TrialListSerializer
+        return TrialSerializer
+
+    def get_queryset(self):
+        """Оптимизированный queryset с select_related/prefetch_related"""
+        qs = Trial.objects.filter(is_deleted=False)
+
+        if self.action == 'list':
+            qs = qs.select_related(
+                'region__oblast',
+                'culture',
+                'trial_type',
+                'predecessor_culture',
+            ).prefetch_related(
+                'participants__application',
+                'participants__sort_record',
+            )
+
+            # Аннотации для TrialListSerializer — через Subquery,
+            # чтобы избежать join multiplication при одновременных JOIN
+            # на trialresult, trialparticipant и trial_indicators.
+            qs = qs.annotate(
+                _results_count=Coalesce(
+                    Subquery(
+                        TrialResult.objects.filter(
+                            trial=OuterRef('pk'),
+                            is_deleted=False,
+                        ).order_by().values('trial').annotate(c=Count('id')).values('c'),
+                        output_field=IntegerField(),
+                    ),
+                    Value(0),
+                ),
+                _participants_count=Coalesce(
+                    Subquery(
+                        TrialParticipant.objects.filter(
+                            trial=OuterRef('pk'),
+                            is_deleted=False,
+                        ).order_by().values('trial').annotate(c=Count('id')).values('c'),
+                        output_field=IntegerField(),
+                    ),
+                    Value(0),
+                ),
+                _indicators_count=Coalesce(
+                    Subquery(
+                        Trial.indicators.through.objects.filter(
+                            trial_id=OuterRef('pk'),
+                        ).order_by().values('trial_id').annotate(c=Count('id')).values('c'),
+                        output_field=IntegerField(),
+                    ),
+                    Value(0),
+                ),
+                _filled_results=Coalesce(
+                    Subquery(
+                        TrialResult.objects.filter(
+                            trial=OuterRef('pk'),
+                            is_deleted=False,
+                            value__isnull=False,
+                        ).order_by().values('trial').annotate(c=Count('id')).values('c'),
+                        output_field=IntegerField(),
+                    ),
+                    Value(0),
+                ),
+            )
+        elif self.action == 'retrieve':
+            qs = qs.select_related(
+                'region__oblast',
+                'region__climate_zone',
+                'culture',
+                'trial_type',
+                'predecessor_culture',
+                'created_by',
+            ).prefetch_related(
+                'participants__sort_record__culture__group_culture',
+                'participants__application',
+                'indicators',
+            )
+
+        return qs
     
     def perform_create(self, serializer):
         """При создании испытания устанавливаем created_by"""
@@ -72,19 +187,41 @@ class TrialViewSet(viewsets.ModelViewSet):
                 })
             raise
     
+    @action(detail=False, methods=['get'], url_path='statistics')
+    def statistics(self, request):
+        """
+        Статистика по испытаниям (количество по статусам).
+
+        GET /api/trials/statistics/
+        Возвращает: { total, by_status: { planned: N, active: N, ... } }
+        """
+        qs = Trial.objects.filter(is_deleted=False)
+        total = qs.count()
+        by_status = {}
+        for code, _label in Trial.STATUS_CHOICES:
+            by_status[code] = qs.filter(status=code).count()
+        # Решения (approved/continue/rejected) хранятся в поле decision
+        for code, _label in Trial.DECISION_CHOICES:
+            by_status[code] = qs.filter(decision=code).count()
+
+        return Response({
+            'total': total,
+            'by_status': by_status,
+        })
+
     @action(detail=False, methods=['get'], url_path='available-sorts')
     def available_sorts(self, request):
         """
         Получить список доступных сортов из Patents Service
-        
+
         Проксирует запрос к Patents Service API для получения списка сортов.
         Используется фронтендом для выбора сорта при создании испытания.
-        
+
         GET /api/v1/trials/available-sorts/
         """
         sorts = patents_api.get_all_sorts(params=request.query_params.dict())
         return Response(sorts)
-    
+
     @action(detail=False, methods=['post'], url_path='validate-sort')
     def validate_sort(self, request):
         """

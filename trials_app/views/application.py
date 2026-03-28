@@ -11,7 +11,7 @@ from django.utils import timezone
 from django.db import models as django_models, transaction
 from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework.filters import OrderingFilter
-from rest_framework.pagination import PageNumberPagination
+from ..pagination import StandardPagination
 
 from ..models import (
     Oblast, Region, ClimateZone, Indicator, GroupCulture, Culture,
@@ -87,10 +87,7 @@ class ApplicationViewSet(viewsets.ModelViewSet):
     ordering = ['-id']  # Сортировка по умолчанию (последние сначала)
     
     # Пагинация
-    pagination_class = PageNumberPagination
-    page_size = 20
-    page_size_query_param = 'page_size'
-    max_page_size = 100
+    pagination_class = StandardPagination
     
     def perform_create(self, serializer):
         """При создании заявки устанавливаем created_by"""
@@ -850,4 +847,82 @@ class ApplicationViewSet(viewsets.ModelViewSet):
             'sort_name': application.sort_record.name,
             'history': history_data
         })
+
+    @action(detail=False, methods=['get'], url_path='export')
+    def export(self, request):
+        """
+        Excel-экспорт заявок с фильтрами.
+
+        GET /api/applications/export/?search=пшеница&year=2025
+        Возвращает .xlsx файл. Принимает те же фильтры что и список заявок.
+        Если передан ?oblast=N, экспортируются только состояния для этой области.
+        """
+        from datetime import date as date_type
+        from django.http import HttpResponse
+        from ..services.exporters import build_applications_export_workbook
+
+        queryset = self.filter_queryset(self.get_queryset())
+
+        # Pass oblast filter to exporter for strict oblast filtering
+        filter_oblast_id = None
+        oblast_param = request.query_params.get('oblast')
+        if oblast_param:
+            try:
+                filter_oblast_id = int(oblast_param)
+            except (ValueError, TypeError):
+                pass
+
+        content = build_applications_export_workbook(queryset, filter_oblast_id=filter_oblast_id)
+
+        filename = f'applications_export_{date_type.today().isoformat()}.xlsx'
+        response = HttpResponse(
+            content,
+            content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        )
+        response['Content-Disposition'] = f'attachment; filename="{filename}"'
+        return response
+
+    @action(detail=False, methods=['get'], url_path='report')
+    def report(self, request):
+        """
+        Сводный отчёт по годам (как в Gosreestr).
+
+        GET /api/applications/report/
+        Возвращает JSON с rows (по годам) и totals.
+        """
+        from ..services.reports import build_applications_report_rows, build_applications_report_totals
+
+        queryset = self.filter_queryset(self.get_queryset())
+        rows = build_applications_report_rows(queryset)
+        totals = build_applications_report_totals(rows)
+
+        return Response({'rows': rows, 'totals': totals})
+
+    @action(detail=False, methods=['get'], url_path='report/export')
+    def report_export(self, request):
+        """
+        Excel-экспорт сводного отчёта.
+
+        GET /api/applications/report/export/
+        """
+        from datetime import date as date_type
+        from django.http import HttpResponse
+        from ..services.reports import (
+            build_applications_report_rows,
+            build_applications_report_totals,
+            build_applications_report_workbook,
+        )
+
+        queryset = self.filter_queryset(self.get_queryset())
+        rows = build_applications_report_rows(queryset)
+        totals = build_applications_report_totals(rows)
+        content = build_applications_report_workbook(rows, totals)
+
+        filename = f'report_{date_type.today().isoformat()}.xlsx'
+        response = HttpResponse(
+            content,
+            content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        )
+        response['Content-Disposition'] = f'attachment; filename="{filename}"'
+        return response
 

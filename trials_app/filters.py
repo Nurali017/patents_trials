@@ -3,6 +3,7 @@
 """
 import django_filters
 from django.db.models import Q
+from rest_framework.filters import SearchFilter
 from .models import Originator, Application, Trial, TrialPlan, Culture, GroupCulture
 
 
@@ -95,7 +96,7 @@ class ApplicationFilter(django_filters.FilterSet):
         help_text='ID области'
     )
     year = django_filters.NumberFilter(
-        field_name='created_at__year',
+        field_name='submission_date__year',
         help_text='Год подачи заявки'
     )
     search = django_filters.CharFilter(
@@ -135,4 +136,85 @@ class ApplicationFilter(django_filters.FilterSet):
                 Q(application_number__icontains=value) |
                 Q(sort_record__name__icontains=value)
             )
+        return queryset
+
+
+class TrialFilter(django_filters.FilterSet):
+    """
+    Фильтр для испытаний сортов
+
+    Поддерживает фильтрацию по:
+    - status — статус испытания (planned, active, completed_008, ...)
+    - oblast — ID области (через region__oblast)
+    - region — ID ГСУ/региона
+    - trial_type — ID типа испытания
+    - culture — ID культуры (локальный)
+    - year — год проведения испытания
+    - search — поиск по названию сорта, номеру заявки, названию ГСУ
+    """
+    status = django_filters.CharFilter(
+        method='filter_status',
+        help_text='Статус испытания (planned, active, ...) или решение (approved, continue, rejected)'
+    )
+    oblast = django_filters.NumberFilter(
+        field_name='region__oblast',
+        help_text='ID области'
+    )
+    region = django_filters.NumberFilter(
+        field_name='region',
+        help_text='ID ГСУ/региона'
+    )
+    trial_type = django_filters.NumberFilter(
+        field_name='trial_type',
+        help_text='ID типа испытания'
+    )
+    trial_type_code = django_filters.CharFilter(
+        field_name='trial_type__code',
+        help_text='Код типа испытания'
+    )
+    culture = django_filters.NumberFilter(
+        field_name='culture',
+        help_text='ID культуры (локальный)'
+    )
+    year = django_filters.NumberFilter(
+        field_name='year',
+        help_text='Год проведения испытания'
+    )
+    search = django_filters.CharFilter(
+        method='filter_search',
+        help_text='Поиск по названию сорта, номеру заявки или ГСУ'
+    )
+
+    class Meta:
+        model = Trial
+        fields = [
+            'status', 'oblast', 'region', 'trial_type',
+            'trial_type_code', 'culture', 'year', 'search',
+        ]
+
+    # Значения decision, которые фронтенд передаёт как status
+    DECISION_VALUES = {v for v, _ in Trial.DECISION_CHOICES}
+
+    def filter_status(self, queryset, name, value):
+        """
+        Фильтр по статусу или решению.
+
+        STATUS_CHOICES: planned, active, completed_008, lab_sample_sent, lab_completed, completed
+        DECISION_CHOICES: approved, continue, rejected — хранятся в поле decision
+        """
+        if not value:
+            return queryset
+        if value in self.DECISION_VALUES:
+            return queryset.filter(decision=value)
+        return queryset.filter(status=value)
+
+    def filter_search(self, queryset, name, value):
+        """Поиск по названию сорта, номеру заявки или ГСУ"""
+        if value:
+            return queryset.filter(
+                Q(region__name__icontains=value) |
+                Q(culture__name__icontains=value) |
+                Q(participants__sort_record__name__icontains=value) |
+                Q(participants__application__application_number__icontains=value)
+            ).distinct()
         return queryset

@@ -278,11 +278,14 @@ class SortRecordSerializer(serializers.ModelSerializer):
         read_only_fields = ['sort_id', 'synced_at']
     
     def validate(self, data):
-        """Валидация: должен быть указан либо culture, либо patents_culture_id"""
+        """Валидация: culture/patents_culture_id обязательны только при создании"""
         culture = data.get('culture')
         patents_culture_id = data.get('patents_culture_id')
-        
-        if not culture and not patents_culture_id:
+
+        # На partial update (PATCH) culture не обязательна — объект уже имеет её
+        is_partial_update = self.instance is not None and self.partial
+
+        if not culture and not patents_culture_id and not is_partial_update:
             raise serializers.ValidationError(
                 "Необходимо указать либо culture, либо patents_culture_id"
             )
@@ -708,6 +711,97 @@ class TrialParticipantSerializer(serializers.ModelSerializer):
                 })
         
         return data
+
+
+class TrialListSerializer(serializers.ModelSerializer):
+    """
+    Лёгкий сериализатор для списка испытаний.
+
+    Не включает тяжёлые вложенные данные:
+    - participants_data (N+1 через TrialParticipantSerializer)
+    - indicators_data (N+1 через IndicatorSerializer)
+    - trial_statistics (вычисляемое поле)
+
+    completion_status оптимизирован через аннотации в queryset.
+    """
+    region_name = serializers.CharField(source='region.name', read_only=True)
+    oblast_name = serializers.CharField(source='region.oblast.name', read_only=True)
+    culture_name = serializers.CharField(source='culture.name', read_only=True, allow_null=True)
+    trial_type_data = TrialTypeSerializer(source='trial_type', read_only=True)
+    application_number = serializers.SerializerMethodField()
+    sort_record_data = serializers.SerializerMethodField()
+    results_count = serializers.SerializerMethodField()
+    completion_status = serializers.SerializerMethodField()
+    predecessor_name = serializers.CharField(
+        source='predecessor_culture.name', read_only=True, allow_null=True
+    )
+    predecessor_code = serializers.CharField(
+        source='predecessor_culture.code', read_only=True, allow_null=True
+    )
+
+    class Meta:
+        model = Trial
+        fields = [
+            'id', 'status', 'decision', 'year', 'start_date',
+            'region', 'region_name', 'oblast_name',
+            'culture', 'culture_name',
+            'trial_type', 'trial_type_data',
+            'application_number', 'sort_record_data',
+            'results_count', 'completion_status',
+            'predecessor_name', 'predecessor_code',
+            'maturity_group_code', 'maturity_group_name',
+            'created_at', 'updated_at',
+        ]
+
+    def get_sort_record_data(self, obj):
+        sort_record = obj.get_sort_record()
+        if sort_record:
+            return {
+                'id': sort_record.id,
+                'name': sort_record.name,
+                'sort_id': sort_record.sort_id,
+            }
+        return None
+
+    def get_application_number(self, obj):
+        # Используем prefetch_related из queryset — без дополнительных запросов
+        participants = obj.participants.all()
+        for p in participants:
+            if p.application_id and not p.is_deleted:
+                return p.application.application_number if hasattr(p, 'application') and p.application else None
+        return None
+
+    def get_results_count(self, obj):
+        if hasattr(obj, '_results_count'):
+            return obj._results_count
+        return obj.results.filter(is_deleted=False).count()
+
+    def get_completion_status(self, obj):
+        """
+        Лёгкий расчёт completion_status из аннотаций queryset.
+
+        Вместо N+1 цикла по participants × indicators × exists(),
+        использует _participants_count, _indicators_count, _filled_results
+        из annotate() в TrialViewSet.get_queryset().
+        """
+        participants_count = getattr(obj, '_participants_count', None)
+        indicators_count = getattr(obj, '_indicators_count', None)
+        filled_results = getattr(obj, '_filled_results', None)
+
+        if participants_count is not None and indicators_count is not None and filled_results is not None:
+            total_required = participants_count * indicators_count
+            if total_required == 0:
+                return {
+                    'is_complete': False,
+                    'filled_percent': 0,
+                }
+            percent = round((filled_results / total_required * 100), 1)
+            return {
+                'is_complete': percent >= 100.0,
+                'filled_percent': percent,
+            }
+        # Fallback — если аннотации не подтянулись (не должно происходить для list)
+        return obj.get_completion_status()
 
 
 class TrialSerializer(serializers.ModelSerializer):

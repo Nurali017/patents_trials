@@ -327,11 +327,13 @@ class Culture(SoftDeleteModel):
         help_text="Группа культур"
     )
     
+    is_winter = models.BooleanField(default=False, verbose_name="Озимая культура")
+
     # Метаданные
     synced_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
-    
+
     class Meta:
         verbose_name = "Культура"
         verbose_name_plural = "Культуры"
@@ -351,6 +353,7 @@ class Culture(SoftDeleteModel):
         if culture_data:
             self.name = culture_data.get('name', self.name)
             self.code = culture_data.get('code', '')
+            self.is_winter = culture_data.get('is_winter', self.is_winter)
             
             # Группа культуры
             group_data = culture_data.get('group', {}) or culture_data.get('group_culture', {})
@@ -837,7 +840,7 @@ class Application(SoftDeleteModel):
         ('in_progress', 'Испытания проводятся'),
         ('completed', 'Испытания завершены'),
         ('registered', 'Включен в реестр'),
-        ('rejected', 'Отклонен'),
+        ('rejected', 'Снята с испытаний'),
     ]
     
     # Группы спелости D-коды
@@ -1091,7 +1094,7 @@ class Application(SoftDeleteModel):
             self.status = 'draft'
         elif all(status['status'] == 'approved' for status in oblast_statuses):
             self.status = 'registered'
-        elif all(status['status'] in ['approved', 'rejected'] for status in oblast_statuses):
+        elif all(status['status'] in ['approved', 'rejected', 'removed', 'withdrawn'] for status in oblast_statuses):
             self.status = 'completed'
         elif any(status['status'] in ['trial_created', 'trial_in_progress', 'trial_completed', 'decision_pending', 'continue'] for status in oblast_statuses):
             self.status = 'in_progress'
@@ -1235,11 +1238,15 @@ class Application(SoftDeleteModel):
             'planned': 0,
             'trial_plan_created': 0,
             'trial_created': 0,
+            'trial_in_progress': 0,
             'trial_completed': 0,
             'decision_pending': 0,
+            'decision_made': 0,
             'approved': 0,
             'continue': 0,
-            'rejected': 0
+            'rejected': 0,
+            'removed': 0,
+            'withdrawn': 0,
         }
         
         for status in oblast_statuses:
@@ -1266,9 +1273,11 @@ class ApplicationOblastState(SoftDeleteModel):
         ('trial_completed', 'Испытание завершено'),
         ('decision_pending', 'Ожидает решения'),
         ('decision_made', 'Решение принято'),
-        ('approved', 'Одобрено'),
-        ('rejected', 'Отклонено'),
+        ('approved', 'Допуск'),
+        ('rejected', 'Снят с испытаний'),
         ('continue', 'Продолжить'),
+        ('removed', 'Снят'),
+        ('withdrawn', 'Отозван'),
     ]
 
     application = models.ForeignKey(
@@ -1389,8 +1398,8 @@ class PlannedDistribution(SoftDeleteModel):
     STATUS_CHOICES = [
         ('planned', 'Запланировано'),
         ('in_progress', 'Испытания идут'),
-        ('approved', 'Одобрено'),
-        ('rejected', 'Отклонено'),
+        ('approved', 'Допуск'),
+        ('rejected', 'Снят с испытаний'),
         ('cancelled', 'Отменено'),
     ]
     status = models.CharField(
@@ -1577,9 +1586,9 @@ class Trial(SoftDeleteModel):
         ('completed', 'Завершено'),
     ]
     DECISION_CHOICES = [
-        ('approved', 'Одобрено'),
+        ('approved', 'Допуск'),
         ('continue', 'Продолжить'),
-        ('rejected', 'Отклонено'),
+        ('rejected', 'Снят с испытаний'),
     ]
     
     region = models.ForeignKey(Region, on_delete=models.CASCADE, related_name='trials')
