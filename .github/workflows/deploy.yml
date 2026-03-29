@@ -43,7 +43,6 @@ jobs:
           host: ${{ secrets.SERVER_HOST }}
           username: ${{ secrets.SERVER_USER }}
           key: ${{ secrets.DEPLOY_SSH_KEY }}
-          script_stop: true
           command_timeout: 30m
           script: |
             set -eu
@@ -65,7 +64,16 @@ jobs:
             docker compose -f docker-compose.prod.yml up -d trials-db
             docker compose -f docker-compose.prod.yml build trials_service
             docker compose -f docker-compose.prod.yml up -d
-            sleep 20
+
+            # Wait for gunicorn to be ready (migrations + collectstatic + startup)
+            echo "Waiting for service to be ready..."
+            for i in $(seq 1 30); do
+              if curl -sf -o /dev/null http://127.0.0.1:8001/swagger/ 2>/dev/null; then
+                echo "Service ready after ${i}s"
+                break
+              fi
+              sleep 2
+            done
 
             COMPOSE_FILE_PATH=docker-compose.prod.yml bash scripts/smoke-test.sh http://127.0.0.1:8001
 
