@@ -397,21 +397,61 @@ class ApplicationViewSet(viewsets.ModelViewSet):
         GET /api/v1/applications/statistics/
         """
         applications = self.get_queryset()
-        
+        total = applications.count()
+
+        # Подсчет заявок с полными документами
+        from trials_app.models import APPLICATION_MANDATORY_DOCUMENT_TYPES
+        mandatory_count = len(APPLICATION_MANDATORY_DOCUMENT_TYPES)
+        docs_complete = 0
+        docs_incomplete = 0
+        if mandatory_count > 0:
+            for app in applications.prefetch_related('documents').iterator(chunk_size=500):
+                uploaded = set(
+                    app.documents.filter(is_deleted=False).values_list('document_type', flat=True)
+                )
+                if all(dt in uploaded for dt in APPLICATION_MANDATORY_DOCUMENT_TYPES):
+                    docs_complete += 1
+                else:
+                    docs_incomplete += 1
+        else:
+            docs_complete = total
+
+        # Распределение по годам подачи
+        from django.db.models import Count
+        by_year_qs = (
+            applications
+            .exclude(submission_date__isnull=True)
+            .values('submission_date__year')
+            .annotate(count=Count('id'))
+            .order_by('submission_date__year')
+        )
+        by_year = {str(row['submission_date__year']): row['count'] for row in by_year_qs}
+
+        registered = applications.filter(status='registered').count()
+        rejected = applications.filter(status='rejected').count()
+        decided = registered + rejected
+        success_rate = round((registered / decided) * 100, 1) if decided > 0 else 0
+
         return Response({
-            'total': applications.count(),
+            'total': total,
             'by_status': {
                 'draft': applications.filter(status='draft').count(),
                 'submitted': applications.filter(status='submitted').count(),
                 'distributed': applications.filter(status='distributed').count(),
                 'in_progress': applications.filter(status='in_progress').count(),
                 'completed': applications.filter(status='completed').count(),
-                'registered': applications.filter(status='registered').count(),
-                'rejected': applications.filter(status='rejected').count(),
+                'registered': registered,
+                'rejected': rejected,
             },
+            'by_year': by_year,
+            'success_rate': success_rate,
             'current_year': applications.filter(
                 submission_date__year=timezone.now().year
             ).count(),
+            'documents': {
+                'complete': docs_complete,
+                'incomplete': docs_incomplete,
+            },
         })
     
     @action(detail=False, methods=['get'], url_path='cultures-for-region')
@@ -675,6 +715,64 @@ class ApplicationViewSet(viewsets.ModelViewSet):
             ]
         })
     
+    @action(detail=False, methods=['get'], url_path='top-cultures')
+    def top_cultures(self, request):
+        """
+        Топ-12 культур по количеству заявок с разбивкой по документам.
+
+        GET /api/v1/applications/top-cultures/
+        """
+        from django.db.models import Count, Q as DQ
+        from trials_app.models import APPLICATION_MANDATORY_DOCUMENT_TYPES
+
+        queryset = self.get_queryset()
+        mandatory_count = len(APPLICATION_MANDATORY_DOCUMENT_TYPES)
+
+        stats = (
+            queryset
+            .values(
+                'sort_record__culture__id',
+                'sort_record__culture__name',
+            )
+            .annotate(
+                total=Count('id'),
+            )
+            .order_by('-total')[:20]
+        )
+
+        # Для каждой культуры подсчитаем docs_complete
+        results = []
+        for row in stats:
+            culture_id = row['sort_record__culture__id']
+            total = row['total']
+            culture_qs = queryset.filter(sort_record__culture_id=culture_id)
+
+            if mandatory_count > 0:
+                docs_complete = 0
+                for app in culture_qs.prefetch_related('documents').iterator(chunk_size=200):
+                    uploaded = set(
+                        app.documents.filter(is_deleted=False)
+                        .values_list('document_type', flat=True)
+                    )
+                    if all(dt in uploaded for dt in APPLICATION_MANDATORY_DOCUMENT_TYPES):
+                        docs_complete += 1
+            else:
+                docs_complete = total
+
+            results.append({
+                'culture_id': culture_id,
+                'culture_name': row['sort_record__culture__name'] or 'Не указана',
+                'total': total,
+                'docs_complete': docs_complete,
+                'docs_incomplete': total - docs_complete,
+            })
+
+        total_applications = queryset.count()
+        return Response({
+            'total_applications': total_applications,
+            'cultures': results,
+        })
+
     @action(detail=False, methods=['get'], url_path='pending-for-region')
     def pending_for_region(self, request):
         """

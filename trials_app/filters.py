@@ -2,9 +2,9 @@
 Фильтры для API endpoints
 """
 import django_filters
-from django.db.models import Q
+from django.db.models import Q, Count, Subquery, OuterRef, Exists
 from rest_framework.filters import SearchFilter
-from .models import Originator, Application, Trial, TrialPlan, Culture, GroupCulture
+from .models import Originator, Application, Trial, TrialPlan, Culture, GroupCulture, Document, APPLICATION_MANDATORY_DOCUMENT_TYPES
 
 
 class OriginatorFilter(django_filters.FilterSet):
@@ -107,10 +107,14 @@ class ApplicationFilter(django_filters.FilterSet):
         method='filter_group_search',
         help_text='Поиск по названию группы культур'
     )
+    has_documents = django_filters.BooleanFilter(
+        method='filter_has_documents',
+        help_text='true — все обязательные документы загружены, false — есть недостающие'
+    )
 
     class Meta:
         model = Application
-        fields = ['culture_group', 'culture_group_name', 'culture', 'patents_culture_id', 'patents_group_id', 'status', 'oblast', 'year', 'search', 'group_search']
+        fields = ['culture_group', 'culture_group_name', 'culture', 'patents_culture_id', 'patents_group_id', 'status', 'oblast', 'year', 'search', 'group_search', 'has_documents']
 
     def filter_culture_group_name(self, queryset, name, value):
         """Фильтр по названию группы культур"""
@@ -128,6 +132,28 @@ class ApplicationFilter(django_filters.FilterSet):
                 Q(sort_record__culture__group_culture__code__icontains=value)
             )
         return queryset
+
+    def filter_has_documents(self, queryset, name, value):
+        """Фильтр по наличию всех обязательных документов"""
+        mandatory_count = len(APPLICATION_MANDATORY_DOCUMENT_TYPES)
+        if mandatory_count == 0:
+            return queryset
+
+        # Подсчитываем количество обязательных типов документов у каждой заявки
+        qs = queryset.annotate(
+            mandatory_docs_count=Count(
+                'documents',
+                filter=Q(
+                    documents__is_deleted=False,
+                    documents__document_type__in=APPLICATION_MANDATORY_DOCUMENT_TYPES,
+                ),
+                distinct=True,
+            )
+        )
+        if value:
+            return qs.filter(mandatory_docs_count__gte=mandatory_count)
+        else:
+            return qs.filter(mandatory_docs_count__lt=mandatory_count)
 
     def filter_search(self, queryset, name, value):
         """Поиск по номеру заявки или названию сорта"""
