@@ -24,9 +24,12 @@ class Command(BaseCommand):
 
     def add_arguments(self, parser):
         parser.add_argument('--dry-run', action='store_true')
+        parser.add_argument('--gosreestr-host', default='localhost')
 
     def handle(self, *args, **options):
         dry_run = options['dry_run']
+
+        gosreestr_host = options.get('gosreestr_host', 'localhost')
 
         if dry_run:
             self.stdout.write(self.style.WARNING('=== DRY RUN ===\n'))
@@ -37,7 +40,7 @@ class Command(BaseCommand):
         try:
             conn = psycopg2.connect(
                 dbname='gosreestr', user='gosreestr', password='gosreestr',
-                host='localhost', port=5432,
+                host=gosreestr_host, port=5432,
             )
             cur = conn.cursor()
             cur.execute("SELECT DISTINCT name FROM registry_originator")
