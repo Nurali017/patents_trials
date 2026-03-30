@@ -195,13 +195,15 @@ class OriginatorViewSet(viewsets.ModelViewSet):
 class SortRecordViewSet(viewsets.ModelViewSet):
     """
     Записи о сортах для испытаний
-    
+
     Хранит ВСЕ данные сорта локально для автономной работы
     Синхронизируется с Patents Service
     """
     queryset = SortRecord.objects.filter(is_deleted=False)
     serializer_class = SortRecordSerializer
-    
+    filter_backends = [DjangoFilterBackend]
+    filterset_fields = ['sort_id']
+
     def get_permissions(self):
         """Чтение - всем, изменение/синхронизация - только авторизованным"""
         if self.action in ['list', 'retrieve', 'by_culture']:
@@ -454,6 +456,96 @@ class SortRecordViewSet(viewsets.ModelViewSet):
 
         serializer = SortRecordByCultureSerializer(sorts, many=True)
         return Response(serializer.data)
+
+    @action(detail=True, methods=['put'], url_path='originators')
+    def manage_originators(self, request, pk=None):
+        """
+        Заменить список оригинаторов сорта (локально + Patents Service)
+
+        PUT /api/sort-records/{id}/originators/
+        Body: [{"originator": <local_id>, "percentage": 100}]
+
+        Контракт: originator = локальный Originator.id (не Patents ID).
+        """
+        sort_record = self.get_object()
+        originators_data = request.data
+
+        if not isinstance(originators_data, list):
+            return Response(
+                {'error': 'Ожидается массив оригинаторов'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        from trials_app.models import SortOriginator
+        from django.db import transaction
+
+        # Validate all originators exist before modifying anything
+        resolved = []
+        for item in originators_data:
+            originator_id = item.get('originator')
+            percentage = item.get('percentage', 100)
+
+            if not originator_id:
+                continue
+
+            if not isinstance(percentage, int) or percentage < 1 or percentage > 100:
+                return Response(
+                    {'error': f'Процент должен быть от 1 до 100 (получено {percentage})'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+            try:
+                originator = Originator.objects.get(id=originator_id, is_deleted=False)
+            except Originator.DoesNotExist:
+                return Response(
+                    {'error': f'Оригинатор с ID {originator_id} не найден'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+            if any(r[0].id == originator.id for r in resolved):
+                return Response(
+                    {'error': f'Дубликат оригинатора: {originator.name}'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+            resolved.append((originator, percentage))
+
+        # Validate total percentage = 100
+        if resolved:
+            total = sum(pct for _, pct in resolved)
+            if total != 100:
+                return Response(
+                    {'error': f'Сумма процентов должна быть 100% (получено {total}%)'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+        with transaction.atomic():
+            SortOriginator.objects.filter(sort_record=sort_record).delete()
+            for originator, percentage in resolved:
+                SortOriginator.objects.create(
+                    sort_record=sort_record,
+                    originator=originator,
+                    percentage=percentage
+                )
+
+        # Sync to Patents Service (best-effort, don't fail the request).
+        # Send both flat IDs (originators) and structured ariginators with percentages
+        # to match the Patents API contract used by sync_from_patents().
+        if sort_record.sort_id:
+            try:
+                patents_api.update_sort(sort_record.sort_id, {
+                    'originators': [orig.originator_id for orig, _ in resolved],
+                    'ariginators': [
+                        {'ariginator': orig.originator_id, 'percentage': pct}
+                        for orig, pct in resolved
+                    ],
+                })
+            except Exception as e:
+                logger.warning(
+                    f"Failed to sync originators to Patents for sort {sort_record.sort_id}: {e}"
+                )
+
+        return Response(SortRecordSerializer(sort_record).data)
 
 
 
