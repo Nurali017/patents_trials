@@ -142,9 +142,10 @@ class Command(BaseCommand):
                 raw[gos_id] = {'decision': 'match', 'patents_sort_id': patents_id, 'dedup_to': ''}
             elif decision == 'create':
                 # For create: sort was created in Patents by import_gosreestr_data
-                # Find its patents_sort_id by name
+                # Find its patents_sort_id by name + culture
                 raw[gos_id] = {'decision': 'create', 'patents_sort_id': '', 'dedup_to': '',
-                               'variety': row.get('gos_variety', '')}
+                               'variety': row.get('gos_variety', ''),
+                               'culture': row.get('gos_culture', '')}
             elif decision == 'dedup':
                 raw[gos_id] = {'decision': 'dedup', 'patents_sort_id': '', 'dedup_to': dedup_to}
             elif decision == 'skip':
@@ -164,10 +165,15 @@ class Command(BaseCommand):
         if patents_sort_id:
             return SortRecord.objects.filter(sort_id=int(patents_sort_id), is_deleted=False).first()
 
-        # For create: find by variety name in SortRecord (already synced from Patents)
+        # For create: find by variety name + culture in SortRecord
         variety = info.get('variety', '')
         if variety and info.get('decision') == 'create':
-            return SortRecord.objects.filter(name=variety, is_deleted=False).first()
+            culture_name = info.get('culture', '').strip()
+            qs = SortRecord.objects.filter(name=variety, is_deleted=False)
+            if culture_name:
+                qs_with_culture = qs.filter(culture__name__iexact=culture_name)
+                return qs_with_culture.first() or qs.first()
+            return qs.first()
 
         return None
 
@@ -226,27 +232,13 @@ class Command(BaseCommand):
 
         sort_lookup = self._build_sort_lookup()
 
-        # Load Gosreestr applications with primary originator
+        # Load Gosreestr applications
         gos_apps = self._gos_query("""
             SELECT a.id, a.registration_number, a.receipt_date, a.variety, a.note
             FROM registry_application a
             ORDER BY a.id
         """)
         self.stdout.write(f'  Gosreestr applications: {len(gos_apps)}')
-
-        # Load primary originator per application (max percentage)
-        gos_applicants = {}
-        for app_id, orig_name in self._gos_query("""
-            SELECT ao.application_id, o.name
-            FROM registry_applicationoriginator ao
-            JOIN registry_originator o ON ao.originator_id = o.id
-            WHERE ao.percentage = (
-                SELECT MAX(ao2.percentage)
-                FROM registry_applicationoriginator ao2
-                WHERE ao2.application_id = ao.application_id
-            )
-        """):
-            gos_applicants[app_id] = orig_name
 
         # Load duplicate drops
         dup_drops = set()
@@ -296,8 +288,8 @@ class Command(BaseCommand):
             if Application.objects.filter(application_number=app_number).exists():
                 app_number = f'LEGACY-{gos_id}'
 
-            # Applicant = primary originator by max percentage
-            applicant = gos_applicants.get(gos_id, f'gosreestr_import:{gos_id}')
+            # Gosreestr has no applicant data — originators are on the sort level
+            # via SortRecord → SortOriginator → Originator
 
             if not self.dry_run:
                 try:
@@ -306,7 +298,7 @@ class Command(BaseCommand):
                         application_number=app_number,
                         submission_date=receipt_date or date(2020, 1, 1),
                         sort_record=sort_record,
-                        applicant=applicant,
+                        applicant='',
                         status='submitted',
                         purpose=note or '',
                         created_by_id=self.created_by_id,

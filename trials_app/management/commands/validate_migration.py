@@ -202,10 +202,9 @@ class Command(BaseCommand):
 
         self._check(
             'SortOriginator coverage',
-            coverage_pct >= 50,
-            f'With: {sr_with_orig}/{sr_total} ({coverage_pct}%). '
-            f'Gosreestr links: {gos_orig_links}, Trials links: {trials_orig_links}. '
-            f'NOTE: backfill Patents.SortAriginator for historical sorts needed'
+            coverage_pct >= 80,
+            f'With: {sr_with_orig}/{sr_total} ({coverage_pct}%), Without: {sr_without}. '
+            f'Gosreestr links: {gos_orig_links}, Trials links: {trials_orig_links}'
         )
 
     def _check7_sortrecord_orphans(self):
