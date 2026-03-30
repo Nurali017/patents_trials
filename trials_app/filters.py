@@ -9,7 +9,7 @@ from .models import Originator, Application, Trial, TrialPlan, Culture, GroupCul
 
 class OriginatorFilter(django_filters.FilterSet):
     """
-    Фильтр для оригинаторов с новыми полями
+    Фильтр для оригинаторов
     """
     is_foreign = django_filters.BooleanFilter(
         field_name='is_foreign',
@@ -18,6 +18,10 @@ class OriginatorFilter(django_filters.FilterSet):
     is_nanoc = django_filters.BooleanFilter(
         field_name='is_nanoc',
         help_text='Фильтр по НАНОЦ оригинаторам'
+    )
+    country = django_filters.CharFilter(
+        field_name='country',
+        help_text='Фильтр по ISO коду страны (например, KZ, RU, DE)'
     )
     has_code = django_filters.BooleanFilter(
         method='filter_has_code',
@@ -30,7 +34,7 @@ class OriginatorFilter(django_filters.FilterSet):
 
     class Meta:
         model = Originator
-        fields = ['is_foreign', 'is_nanoc', 'has_code', 'search']
+        fields = ['is_foreign', 'is_nanoc', 'country', 'has_code', 'search']
 
     def filter_has_code(self, queryset, name, value):
         """Фильтр по наличию кода"""

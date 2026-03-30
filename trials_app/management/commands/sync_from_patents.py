@@ -247,28 +247,28 @@ class Command(BaseCommand):
                         defaults={
                             'name': originator_data.get('name', ''),
                             'code': originator_data.get('code'),
-                            'is_foreign': originator_data.get('is_foreign', False),
+                            'country': originator_data.get('country', ''),
                             'is_nanoc': originator_data.get('is_nanoc', False),
                             'is_deleted': False,
                             'synced_at': timezone.now()
                         }
                     )
-                    
+
                     if created:
                         self.stats['originators']['created'] += 1
                     else:
-                        if (originator.name != originator_data.get('name', '') or 
+                        if (originator.name != originator_data.get('name', '') or
                             originator.code != originator_data.get('code') or
-                            originator.is_foreign != originator_data.get('is_foreign', False) or
+                            originator.country != originator_data.get('country', '') or
                             originator.is_nanoc != originator_data.get('is_nanoc', False) or
                             originator.is_deleted):
                             originator.name = originator_data.get('name', '')
                             originator.code = originator_data.get('code')
-                            originator.is_foreign = originator_data.get('is_foreign', False)
+                            originator.country = originator_data.get('country', '')
                             originator.is_nanoc = originator_data.get('is_nanoc', False)
                             originator.is_deleted = False
                             originator.synced_at = timezone.now()
-                            originator.save()
+                            originator.save()  # is_foreign пересчитается в save()
                             self.stats['originators']['updated'] += 1
                         else:
                             self.stats['originators']['skipped'] += 1

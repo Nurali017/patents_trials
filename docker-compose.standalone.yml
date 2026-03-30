@@ -1,0 +1,57 @@
+services:
+  trials-db:
+    image: postgres:14-alpine
+    ports:
+      - "55433:5432"
+    environment:
+      - POSTGRES_USER=admin
+      - POSTGRES_PASSWORD=qwe1daSjewspds12
+      - POSTGRES_DB=trials_db
+    volumes:
+      - trials_postgres_standalone_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U admin -d trials_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  trials_service:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: >
+      sh -c "
+        echo '⏳ Ожидание БД...' &&
+        python manage.py wait_for_db &&
+        echo '🔄 Применение миграций...' &&
+        python manage.py migrate --noinput &&
+        echo '🚀 Запуск сервиса...' &&
+        python manage.py runserver 0.0.0.0:8001
+      "
+    volumes:
+      - .:/usr/src/app/
+      - ./volumes/media:/media
+    ports:
+      - "18001:8001"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      trials-db:
+        condition: service_healthy
+    environment:
+      - DEBUG=1
+      - MODE=dev
+      - HOST_NAME=localhost
+      - SECRET_KEY=trials-secret-key-change-in-production
+      - SQL_ENGINE=django.db.backends.postgresql
+      - SQL_DATABASE=trials_db
+      - SQL_USER=admin
+      - SQL_PASSWORD=qwe1daSjewspds12
+      - SQL_HOST=trials-db
+      - SQL_PORT=5432
+      - PATENTS_SERVICE_URL=http://host.docker.internal:18000
+      - PATENTS_SERVICE_USERNAME=admin
+      - PATENTS_SERVICE_PASSWORD=admin123
+
+volumes:
+  trials_postgres_standalone_data:

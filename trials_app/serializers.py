@@ -213,20 +213,39 @@ class OriginatorSerializer(serializers.ModelSerializer):
     """Сериализатор для создания и обновления оригинаторов"""
     originator_id = serializers.IntegerField(read_only=True, help_text="ID оригинатора в Patents Service (автоматически назначается)")
     code = serializers.IntegerField(required=False, allow_null=True, help_text="Код оригинатора")
+    is_foreign = serializers.BooleanField(read_only=True)
+    country_display = serializers.SerializerMethodField()
     synced_at = serializers.DateTimeField(read_only=True)
     created_at = serializers.DateTimeField(read_only=True)
     updated_at = serializers.DateTimeField(read_only=True)
-    
+
     class Meta:
         model = Originator
-        fields = ['id', 'originator_id', 'name', 'code', 'is_foreign', 'is_nanoc', 'synced_at', 'created_at', 'updated_at']
+        fields = ['id', 'originator_id', 'name', 'code', 'country', 'country_display',
+                  'is_foreign', 'is_nanoc', 'synced_at', 'created_at', 'updated_at']
+
+    def get_country_display(self, obj):
+        if obj.country:
+            from django_countries import countries
+            return dict(countries).get(obj.country, obj.country)
+        return ''
 
 
 class OriginatorRetrieveSerializer(serializers.ModelSerializer):
     """Сериализатор для получения данных оригинатора"""
+    is_foreign = serializers.BooleanField(read_only=True)
+    country_display = serializers.SerializerMethodField()
+
     class Meta:
         model = Originator
-        fields = ['id', 'originator_id', 'name', 'code', 'is_foreign', 'is_nanoc', 'synced_at', 'created_at', 'updated_at']
+        fields = ['id', 'originator_id', 'name', 'code', 'country', 'country_display',
+                  'is_foreign', 'is_nanoc', 'synced_at', 'created_at', 'updated_at']
+
+    def get_country_display(self, obj):
+        if obj.country:
+            from django_countries import countries
+            return dict(countries).get(obj.country, obj.country)
+        return ''
 
 class SortOriginatorSerializer(serializers.ModelSerializer):
     """Сериализатор для связи сорта с оригинатором"""

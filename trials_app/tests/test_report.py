@@ -34,8 +34,8 @@ class ReportServiceTest(TestCase):
         self.oblast2 = Oblast.objects.create(name='Акмолинская', code='AKM')
         self.user = User.objects.create_user(username='test', password='test')
 
-        self.orig_domestic = Originator.objects.create(originator_id=1, name='ТОО НИИ', is_foreign=False, is_nanoc=True)
-        self.orig_foreign = Originator.objects.create(originator_id=2, name='Bayer AG', is_foreign=True)
+        self.orig_domestic = Originator.objects.create(originator_id=1, name='ТОО НИИ', country='KZ', is_nanoc=True)
+        self.orig_foreign = Originator.objects.create(originator_id=2, name='Bayer AG', country='DE')
 
     def _make_app(self, number, submission_date, sort_name, culture=None, originators=None, oblast_statuses=None):
         sr = SortRecord.objects.create(

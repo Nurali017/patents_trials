@@ -438,7 +438,7 @@ class PatentsServiceClient:
             {
                 "name": "Название оригинатора",
                 "code": 123,
-                "is_foreign": false,
+                "country": "KZ",
                 "is_nanoc": false
             }
             

@@ -402,31 +402,43 @@ class Originator(SoftDeleteModel):
         default=False,
         help_text="НАНОЦ оригинатор"
     )
-    
+    country = models.CharField(
+        max_length=2,
+        blank=True,
+        default='',
+        help_text="ISO 3166-1 alpha-2 код страны"
+    )
+
     # Метаданные
     synced_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
-    
+
     class Meta:
         verbose_name = "Оригинатор"
         verbose_name_plural = "Оригинаторы"
         ordering = ['name']
-    
+
     def __str__(self):
         return self.name
-    
+
+    def save(self, *args, **kwargs):
+        if self.country:
+            self.is_foreign = self.country != 'KZ'
+        super().save(*args, **kwargs)
+
     def sync_from_patents(self):
         """Синхронизировать данные с Patents Service"""
         from .patents_integration import patents_api
         from django.utils import timezone
-        
+
         originator_data = patents_api.get_originator(self.originator_id)
         if originator_data:
             self.name = originator_data.get('name', self.name)
             self.code = originator_data.get('code', self.code)
-            self.is_foreign = originator_data.get('is_foreign', self.is_foreign)
+            self.country = originator_data.get('country', self.country)
             self.is_nanoc = originator_data.get('is_nanoc', self.is_nanoc)
+            # is_foreign пересчитается в save()
             self.synced_at = timezone.now()
             self.save()
             return True

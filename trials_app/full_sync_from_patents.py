@@ -427,21 +427,28 @@ class FullSyncFromPatents:
                     originator_id=originator_id,
                     defaults={
                         'name': name,
+                        'country': originator_data.get('country', ''),
+                        'is_nanoc': originator_data.get('is_nanoc', False),
                         'is_deleted': False,
                         'synced_at': timezone.now()
                     }
                 )
-                
+
                 if created:
                     if i <= 10:  # Показываем только первые 10
                         self.log(f"  ✅ {i:2d}. Создан: {name} (ID: {originator_id})")
                     self.stats['originators']['created'] += 1
                 else:
-                    if originator.name != name or originator.is_deleted:
+                    new_country = originator_data.get('country', '')
+                    new_is_nanoc = originator_data.get('is_nanoc', False)
+                    if (originator.name != name or originator.country != new_country or
+                            originator.is_nanoc != new_is_nanoc or originator.is_deleted):
                         originator.name = name
+                        originator.country = new_country
+                        originator.is_nanoc = new_is_nanoc
                         originator.is_deleted = False
                         originator.synced_at = timezone.now()
-                        originator.save()
+                        originator.save()  # is_foreign пересчитается в save()
                         if i <= 10:
                             self.log(f"  🔄 {i:2d}. Обновлен: {name} (ID: {originator_id})")
                         self.stats['originators']['updated'] += 1

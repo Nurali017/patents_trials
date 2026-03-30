@@ -49,13 +49,13 @@ class OriginatorViewSet(viewsets.ModelViewSet):
     filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
     filterset_class = OriginatorFilter
     search_fields = ['name', 'code']
-    ordering_fields = ['name', 'code', 'is_foreign', 'is_nanoc']
+    ordering_fields = ['name', 'code', 'country', 'is_nanoc']
     ordering = ['name']
     pagination_class = None  # Отключаем пагинацию
     
     def get_permissions(self):
         """Чтение - всем, изменение - только авторизованным"""
-        if self.action in ['list', 'retrieve', 'statistics']:
+        if self.action in ['list', 'retrieve', 'statistics', 'country_list']:
             return [permissions.AllowAny()]
         return [permissions.IsAuthenticated()]
     
@@ -77,7 +77,7 @@ class OriginatorViewSet(viewsets.ModelViewSet):
         # Убираем поля, которые не нужны для Patents Service
         patents_data = {
             'name': originator_data.get('name'),
-            'is_foreign': originator_data.get('is_foreign', False),
+            'country': originator_data.get('country', ''),
             'is_nanoc': originator_data.get('is_nanoc', False),
         }
         
@@ -118,7 +118,7 @@ class OriginatorViewSet(viewsets.ModelViewSet):
         patents_data = {
             'name': originator_data.get('name', originator.name),
             'code': originator_data.get('code', originator.code),
-            'is_foreign': originator_data.get('is_foreign', originator.is_foreign),
+            'country': originator_data.get('country', originator.country),
             'is_nanoc': originator_data.get('is_nanoc', originator.is_nanoc),
         }
         
@@ -150,6 +150,17 @@ class OriginatorViewSet(viewsets.ModelViewSet):
             instance.is_deleted = True
             instance.save()
     
+    @action(detail=False, methods=['get'], url_path='countries')
+    def country_list(self, request):
+        """
+        Список стран для выбора при создании/редактировании оригинатора
+
+        GET /api/patents/ariginators/countries/
+        """
+        from django_countries import countries
+        data = [{'code': code, 'name': name} for code, name in countries]
+        return Response(data)
+
     @action(detail=False, methods=['get'], url_path='statistics')
     def statistics(self, request):
         """

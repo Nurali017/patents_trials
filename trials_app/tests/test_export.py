@@ -90,7 +90,7 @@ class ExportWorkbookTest(TestCase):
 
     def test_with_originators(self):
         """Export correctly shows originator data."""
-        orig = Originator.objects.create(originator_id=1, name='ТОО Тестовый НИИ', is_foreign=False, is_nanoc=True)
+        orig = Originator.objects.create(originator_id=1, name='ТОО Тестовый НИИ', country='KZ', is_nanoc=True)
         SortOriginator.objects.create(sort_record=self.sort, originator=orig, percentage=100)
 
         ApplicationOblastState.objects.create(application=self.app, oblast=self.oblast1, status='approved')
