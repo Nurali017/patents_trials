@@ -1096,7 +1096,7 @@ class Application(SoftDeleteModel):
             self.status = 'registered'
         elif all(status['status'] in ['approved', 'rejected', 'removed', 'withdrawn'] for status in oblast_statuses):
             self.status = 'completed'
-        elif any(status['status'] in ['trial_created', 'trial_in_progress', 'trial_completed', 'decision_pending', 'continue'] for status in oblast_statuses):
+        elif any(status['status'] in ['trial_created', 'trial_in_progress', 'trial_completed', 'decision_pending', 'decision_made', 'continue'] for status in oblast_statuses):
             self.status = 'in_progress'
         elif any(status['status'] in ['trial_plan_created'] for status in oblast_statuses):
             self.status = 'distributed'

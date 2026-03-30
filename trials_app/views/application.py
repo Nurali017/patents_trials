@@ -16,6 +16,7 @@ from ..pagination import StandardPagination
 from ..models import (
     Oblast, Region, ClimateZone, Indicator, GroupCulture, Culture,
     Originator, SortRecord, Application, ApplicationDecisionHistory,
+    ApplicationOblastState,
     PlannedDistribution, TrialType, Trial, TrialParticipant, TrialResult,
     TrialLaboratoryResult, Document, TrialPlan, TrialPlanParticipant,
     APPLICATION_MANDATORY_DOCUMENT_TYPES,
@@ -840,11 +841,126 @@ class ApplicationViewSet(viewsets.ModelViewSet):
             'applications': result
         })
     
+    @action(detail=True, methods=['post'], url_path='update-oblast-statuses')
+    def update_oblast_statuses(self, request, pk=None):
+        """
+        Ручное обновление статусов по областям.
+
+        - Для финальных статусов (approved/continue/rejected) также создаёт
+          ApplicationDecisionHistory и пишет decision metadata в OblastState.
+        - Для возврата в ранние статусы (planned..decision_made) очищает
+          decision metadata, чтобы не оставлять стейл от предыдущего решения.
+        - trial и trial_plan никогда не затрагиваются.
+
+        POST /api/applications/{id}/update-oblast-statuses/
+        Body: { "statuses": [{ "oblast_id": 1, "status": "approved" }, ...] }
+        """
+        DECISION_STATUSES = {'approved', 'continue', 'rejected'}
+        PRE_DECISION_STATUSES = {
+            'planned', 'trial_plan_created', 'trial_created',
+            'trial_in_progress', 'trial_completed',
+            'decision_pending', 'decision_made',
+        }
+
+        application = self.get_object()
+        statuses = request.data.get('statuses', [])
+
+        if not isinstance(statuses, list) or not statuses:
+            return Response(
+                {'success': False, 'error': 'statuses list is required'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        valid_statuses = dict(ApplicationOblastState.STATUS_CHOICES)
+        target_ids = set(application.target_oblasts.values_list('id', flat=True))
+
+        # Fail-fast: validate all items before applying any changes
+        errors = []
+        for idx, item in enumerate(statuses):
+            oblast_id = item.get('oblast_id')
+            new_status = item.get('status')
+            if oblast_id not in target_ids:
+                errors.append(f'[{idx}] Oblast {oblast_id} not in target oblasts')
+            if new_status not in valid_statuses:
+                errors.append(f'[{idx}] Invalid status: {new_status}')
+
+        if errors:
+            return Response(
+                {'success': False, 'errors': errors},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        now = timezone.now()
+        updated_count = 0
+
+        with transaction.atomic():
+            for item in statuses:
+                oblast_id = item['oblast_id']
+                new_status = item['status']
+                qs = ApplicationOblastState.objects.filter(
+                    application=application,
+                    oblast_id=oblast_id,
+                    is_deleted=False,
+                )
+
+                if new_status in DECISION_STATUSES:
+                    # Decision status: update status + decision metadata + create history
+                    rows = qs.update(
+                        status=new_status,
+                        decision_date=now.date(),
+                        decision_justification='Ручное изменение статуса',
+                        decided_by=request.user,
+                        decision_year=now.year,
+                        updated_at=now,
+                    )
+                    years_tested = ApplicationDecisionHistory.objects.filter(
+                        application=application,
+                        oblast_id=oblast_id,
+                        year__lte=now.year,
+                    ).exclude(year=now.year).count() + 1
+                    ApplicationDecisionHistory.objects.update_or_create(
+                        application=application,
+                        oblast_id=oblast_id,
+                        year=now.year,
+                        defaults={
+                            'decision': new_status,
+                            'decision_date': now.date(),
+                            'decision_justification': 'Ручное изменение статуса',
+                            'decided_by': request.user,
+                            'years_tested_total': years_tested,
+                        },
+                    )
+                elif new_status in PRE_DECISION_STATUSES:
+                    # Pre-decision: clear stale decision metadata
+                    rows = qs.update(
+                        status=new_status,
+                        decision_date=None,
+                        decision_justification=None,
+                        decided_by=None,
+                        decision_year=None,
+                        updated_at=now,
+                    )
+                else:
+                    # removed/withdrawn: update status only
+                    rows = qs.update(status=new_status, updated_at=now)
+
+                updated_count += rows
+
+            application._update_overall_status()
+
+        application.refresh_from_db()
+        serializer = self.get_serializer(application)
+        return Response({
+            'success': True,
+            'updated_count': updated_count,
+            'application': serializer.data,
+        })
+
     @action(detail=True, methods=['post'], url_path='make-decision')
     def make_decision(self, request, pk=None):
         """
         Принять решение по заявке за год
-        
+
         POST /api/applications/{id}/make-decision/
         
         Body:
