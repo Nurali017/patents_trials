@@ -255,10 +255,13 @@ class SortRecordViewSet(viewsets.ModelViewSet):
             )
             
             logger.info(f"Сорт создан локально с ID: {sort.id}, Patents ID: {sort.sort_id}")
-            
+
             # Обрабатываем оригинаторов после создания сорта
-            self._handle_originators(sort, sort_data.get('originators', []))
-            
+            # originators не проходит через validated_data (SerializerMethodField = read-only),
+            # поэтому берём из request.data
+            originators_data = self.request.data.get('originators', [])
+            self._handle_originators(sort, originators_data)
+
             return sort
         else:
             # Если не удалось создать в Patents Service, создаем только локально
@@ -270,56 +273,56 @@ class SortRecordViewSet(viewsets.ModelViewSet):
                 sort_id=temp_id,
                 synced_at=None
             )
-            
+
             logger.info(f"Сорт создан локально с временным ID: {sort.id}, temp Patents ID: {sort.sort_id}")
-            
+
             # Обрабатываем оригинаторов даже при локальном создании
-            self._handle_originators(sort, sort_data.get('originators', []))
+            originators_data = self.request.data.get('originators', [])
+            self._handle_originators(sort, originators_data)
             
             return sort
     
     def _handle_originators(self, sort_record, originators_data):
         """
         Обработать оригинаторов для созданного сорта
-        
+
         Args:
             sort_record: созданный SortRecord
             originators_data: список оригинаторов из запроса
                 [{"originator_id": 1, "percentage": 100}]
+                originator_id может быть как локальный ID, так и Patents ID
         """
         from trials_app.models import SortOriginator, Originator
-        
+
         if not originators_data:
             return
-        
+
         # Удаляем старые связи (если есть)
         SortOriginator.objects.filter(sort_record=sort_record).delete()
-        
+
         # Создаем новые связи
         for orig_data in originators_data:
             originator_id = orig_data.get('originator_id')
             percentage = orig_data.get('percentage', 100)
-            
+
             if not originator_id:
                 continue
-            
+
             try:
-                # Находим оригинатора по originator_id (ID в Patents Service)
-                originator = Originator.objects.get(
-                    originator_id=originator_id,
-                    is_deleted=False
-                )
-                
-                # Создаем связь
+                # Сначала ищем по локальному id, затем по Patents originator_id
+                try:
+                    originator = Originator.objects.get(id=originator_id, is_deleted=False)
+                except Originator.DoesNotExist:
+                    originator = Originator.objects.get(originator_id=originator_id, is_deleted=False)
+
                 SortOriginator.objects.create(
                     sort_record=sort_record,
                     originator=originator,
                     percentage=percentage
                 )
-                
+
             except Originator.DoesNotExist:
-                # Если оригинатор не найден, пропускаем
-                logger.warning(f"Оригинатор с Patents ID {originator_id} не найден")
+                logger.warning(f"Оригинатор с ID {originator_id} не найден (ни local, ни Patents)")
                 continue
     
     def perform_update(self, serializer):
