@@ -30,15 +30,8 @@ HEADERS = [
 
 STATUS_DISPLAY = {
     'planned': 'Запланировано',
-    'trial_plan_created': 'План создан',
-    'trial_created': 'Испытание создано',
-    'trial_in_progress': 'Испытание идет',
-    'trial_completed': 'Испытание завершено',
-    'decision_pending': 'Ожидает решения',
-    'decision_made': 'Решение принято',
-    'approved': 'Одобрено',
-    'rejected': 'Отклонено',
-    'continue': 'Продолжить',
+    'in_trial': 'В испытании',
+    'approved': 'Допуск',
     'removed': 'Снят',
     'withdrawn': 'Отозван',
     'submitted': 'Подана',

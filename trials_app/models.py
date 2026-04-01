@@ -1031,7 +1031,7 @@ class Application(SoftDeleteModel):
             defaults['decision_date'] = decision_date
         if decision_justification is not None:
             defaults['decision_justification'] = decision_justification
-        if decided_by is not None or new_status in ['approved', 'continue', 'rejected', 'removed', 'withdrawn', 'decision_pending', 'decision_made']:
+        if decided_by is not None or new_status in ['approved', 'removed', 'withdrawn', 'in_trial']:
             defaults['decided_by'] = decided_by
         if decision_year is not None:
             defaults['decision_year'] = decision_year
@@ -1108,12 +1108,10 @@ class Application(SoftDeleteModel):
             self.status = 'draft'
         elif all(status['status'] == 'approved' for status in oblast_statuses):
             self.status = 'registered'
-        elif all(status['status'] in ['approved', 'rejected', 'removed', 'withdrawn'] for status in oblast_statuses):
+        elif all(status['status'] in ['approved', 'removed', 'withdrawn'] for status in oblast_statuses):
             self.status = 'completed'
-        elif any(status['status'] in ['trial_created', 'trial_in_progress', 'trial_completed', 'decision_pending', 'decision_made', 'continue'] for status in oblast_statuses):
+        elif any(status['status'] == 'in_trial' for status in oblast_statuses):
             self.status = 'in_progress'
-        elif any(status['status'] in ['trial_plan_created'] for status in oblast_statuses):
-            self.status = 'distributed'
         else:
             self.status = 'submitted'
 
@@ -1127,7 +1125,7 @@ class Application(SoftDeleteModel):
         Args:
             oblast: Область
             year: Год решения
-            decision: Решение ('continue', 'approved', 'rejected', 'removed', 'withdrawn')
+            decision: Решение ('continue', 'approved', 'rejected')
             justification: Обоснование решения
             decided_by: Кто принял решение
             average_yield: Средняя урожайность за год (опционально)
@@ -1254,15 +1252,8 @@ class Application(SoftDeleteModel):
         summary = {
             'total_oblasts': len(oblast_statuses),
             'planned': 0,
-            'trial_plan_created': 0,
-            'trial_created': 0,
-            'trial_in_progress': 0,
-            'trial_completed': 0,
-            'decision_pending': 0,
-            'decision_made': 0,
+            'in_trial': 0,
             'approved': 0,
-            'continue': 0,
-            'rejected': 0,
             'removed': 0,
             'withdrawn': 0,
         }
@@ -1285,15 +1276,8 @@ class ApplicationOblastState(SoftDeleteModel):
 
     STATUS_CHOICES = [
         ('planned', 'Запланировано'),
-        ('trial_plan_created', 'План создан'),
-        ('trial_created', 'Испытание создано'),
-        ('trial_in_progress', 'Испытание идет'),
-        ('trial_completed', 'Испытание завершено'),
-        ('decision_pending', 'Ожидает решения'),
-        ('decision_made', 'Решение принято'),
+        ('in_trial', 'В испытании'),
         ('approved', 'Допуск'),
-        ('rejected', 'Снят с испытаний'),
-        ('continue', 'Продолжить'),
         ('removed', 'Снят'),
         ('withdrawn', 'Отозван'),
     ]
@@ -3389,7 +3373,7 @@ class AnnualDecisionTable(SoftDeleteModel):
                 # Обновить статус заявки для области
                 application.update_oblast_status(
                     oblast=table.oblast,
-                    new_status='decision_pending',
+                    new_status='in_trial',
                     annual_decision_item=item
                 )
                 
@@ -3612,11 +3596,11 @@ class AnnualDecisionItem(SoftDeleteModel):
             if self.decision == 'approved':
                 new_status = 'approved'
             elif self.decision == 'rejected':
-                new_status = 'rejected'
+                new_status = 'removed'
             elif self.decision == 'continue':
-                new_status = 'continue'
+                new_status = 'in_trial'
             else:
-                new_status = 'decision_made'
+                new_status = 'in_trial'
             
             # Обновить статус заявки для области
             application.update_oblast_status(

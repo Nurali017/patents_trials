@@ -3,10 +3,9 @@ recalc_application_status -- Recalculate Application.status for migrated Gosrees
 
 Uses Gosreestr-style priority resolution (not _update_overall_status):
   1. approved wins → registered
-  2. ongoing (continue/planned/trial_*) → in_progress
-  3. trial_plan_created → distributed
-  4. all removed/rejected → rejected
-  5. all withdrawn (excluded) → unchanged
+  2. ongoing (in_trial/planned) → in_progress
+  3. all removed → rejected
+  4. all withdrawn (excluded) → unchanged
 
 Scope: only applications with migrated_from_gosreestr: tagged oblast states.
 
@@ -20,10 +19,7 @@ from trials_app.models import Application, ApplicationOblastState
 
 MIGRATED_TAG_PREFIX = 'migrated_from_gosreestr:'
 
-ONGOING_STATUSES = {
-    'continue', 'planned', 'trial_created', 'trial_in_progress',
-    'trial_completed', 'decision_pending', 'decision_made',
-}
+ONGOING_STATUSES = {'in_trial', 'planned'}
 
 
 def resolve_migrated_status(oblast_statuses):
@@ -37,16 +33,12 @@ def resolve_migrated_status(oblast_statuses):
     if 'approved' in statuses:
         return 'registered'
 
-    # Priority 2: ongoing (does NOT include trial_plan_created)
+    # Priority 2: ongoing
     if statuses & ONGOING_STATUSES:
         return 'in_progress'
 
-    # trial_plan_created → distributed (separate from ongoing)
-    if 'trial_plan_created' in statuses:
-        return 'distributed'
-
-    # Priority 3: all removed/rejected
-    if statuses <= {'removed', 'rejected'}:
+    # Priority 3: all removed
+    if statuses <= {'removed'}:
         return 'rejected'
 
     return None  # don't change

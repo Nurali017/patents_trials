@@ -113,7 +113,7 @@ class WorkflowServiceTests(TestCase):
 
         self.assertEqual(len(created_distributions), 1)
         self.assertEqual(created_distributions[0].status, 'planned')
-        self.assertEqual(oblast_state.status, 'trial_plan_created')
+        self.assertEqual(oblast_state.status, 'planned')
         self.assertEqual(oblast_state.trial_plan_id, trial_plan.id)
         self.assertEqual(application.status, 'distributed')
 
@@ -137,7 +137,7 @@ class WorkflowServiceTests(TestCase):
             is_deleted=False,
         )
 
-        self.assertEqual(oblast_state.status, 'trial_created')
+        self.assertEqual(oblast_state.status, 'in_trial')
         self.assertEqual(oblast_state.trial_id, trial.id)
         self.assertEqual(application.status, 'in_progress')
         self.assertEqual(planned_distribution.status, 'in_progress')
@@ -149,7 +149,7 @@ class WorkflowServiceTests(TestCase):
         WorkflowService.sync_trial_progress(trial)
 
         oblast_state.refresh_from_db()
-        self.assertEqual(oblast_state.status, 'trial_completed')
+        self.assertEqual(oblast_state.status, 'in_trial')
 
     def test_record_trial_decision_approved_registers_application(self):
         application = self.create_application('003')
@@ -235,7 +235,7 @@ class WorkflowServiceTests(TestCase):
             year=2026,
         )
 
-        self.assertEqual(oblast_state.status, 'continue')
+        self.assertEqual(oblast_state.status, 'in_trial')
         self.assertEqual(application.status, 'in_progress')
         self.assertEqual(planned_distribution.status, 'in_progress')
         self.assertEqual(planned_distribution.year_started, 2026)
@@ -268,7 +268,7 @@ class WorkflowServiceTests(TestCase):
             is_deleted=False,
         )
 
-        self.assertEqual(oblast_state.status, 'rejected')
+        self.assertEqual(oblast_state.status, 'removed')
         self.assertEqual(application.status, 'completed')
         self.assertEqual(planned_distribution.status, 'rejected')
         self.assertEqual(planned_distribution.year_completed, 2026)

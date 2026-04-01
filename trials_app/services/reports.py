@@ -19,13 +19,10 @@ from openpyxl.utils import get_column_letter
 
 
 # Statuses that count as "continued" (ongoing testing)
-CONTINUED_STATUSES = {
-    'continue', 'planned', 'trial_plan_created', 'trial_created',
-    'trial_in_progress', 'trial_completed', 'decision_pending', 'decision_made',
-}
+CONTINUED_STATUSES = {'in_trial', 'planned'}
 
 # Statuses that count as "removed"
-REMOVED_STATUSES = {'removed', 'rejected'}
+REMOVED_STATUSES = {'removed'}
 
 
 @dataclass

@@ -71,7 +71,7 @@ class WorkflowService:
             cls.set_oblast_state(
                 application,
                 oblast,
-                'trial_plan_created',
+                'planned',
                 save_application_status=False,
             )
 
@@ -87,7 +87,7 @@ class WorkflowService:
             cls.set_oblast_state(
                 planned_dist.application,
                 planned_dist.region.oblast,
-                'trial_plan_created',
+                'planned',
                 trial_plan=trial_plan,
                 save_application_status=False,
             )
@@ -104,11 +104,11 @@ class WorkflowService:
 
     @classmethod
     def _oblast_state_for_trial(cls, trial):
-        if trial.decision in cls.FINAL_DECISIONS:
-            return trial.decision
-        if trial.status in cls.TRIAL_COMPLETED_STATUSES:
-            return 'trial_completed'
-        return 'trial_created'
+        if trial.decision == 'approved':
+            return 'approved'
+        if trial.decision == 'rejected':
+            return 'removed'
+        return 'in_trial'
 
     @classmethod
     @transaction.atomic

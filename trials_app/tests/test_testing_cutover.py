@@ -21,7 +21,7 @@ class MapGosreestrStatusTests(TestCase):
 
     def test_testing_before_2026_returns_continue(self):
         result = map_gosreestr_status('testing', date(2025, 6, 15))
-        self.assertEqual(result, 'continue')
+        self.assertEqual(result, 'in_trial')
 
     def test_testing_2026_returns_planned(self):
         result = map_gosreestr_status('testing', date(2026, 1, 29))
@@ -29,7 +29,7 @@ class MapGosreestrStatusTests(TestCase):
 
     def test_testing_none_date_returns_continue(self):
         result = map_gosreestr_status('testing', None)
-        self.assertEqual(result, 'continue')
+        self.assertEqual(result, 'in_trial')
 
     def test_approved_unchanged(self):
         self.assertEqual(map_gosreestr_status('approved', date(2020, 1, 1)), 'approved')
@@ -104,7 +104,7 @@ class FixTestingCutoverCommandTests(TestCase):
         call_command('fix_testing_cutover', stdout=StringIO())
 
         aos.refresh_from_db()
-        self.assertEqual(aos.status, 'continue')
+        self.assertEqual(aos.status, 'in_trial')
 
     @patch('trials_app.management.commands.fix_testing_cutover.psycopg2.connect')
     def test_2026_testing_stays_planned(self, mock_connect):
@@ -193,7 +193,7 @@ class FixTestingCutoverCommandTests(TestCase):
         """--reverse should revert continue → planned and recalc status."""
         app = self._create_app('CUT-007', date(2024, 1, 1))
         aos = self._create_oblast_state(
-            app, self.oblast_a, 'continue', 'migrated_from_gosreestr:600',
+            app, self.oblast_a, 'in_trial', 'migrated_from_gosreestr:600',
         )
         mock_connect.return_value = self._mock_gosreestr_years({600: 2024})
 

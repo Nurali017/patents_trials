@@ -2,7 +2,7 @@
 fix_testing_cutover -- Fix testing→planned cutover for 2026 Trials rollout.
 
 Gosreestr 'testing' was mapped to 'planned' during migration, but semantically:
-- testing + receipt_date < 2026 → 'continue' (ongoing trials from legacy system)
+- testing + receipt_date < 2026 → 'in_trial' (ongoing trials from legacy system)
 - testing + receipt_date >= 2026 → 'planned' (new apps to be managed in Trials)
 
 Uses Gosreestr receipt_date as source of truth (not Trials submission_date).
@@ -83,7 +83,7 @@ class Command(BaseCommand):
         if not self.dry_run:
             updated = ApplicationOblastState.objects.filter(
                 id__in=to_continue,
-            ).update(status='continue')
+            ).update(status='in_trial')
             self.stdout.write(f'Updated {updated} ApplicationOblastState → continue')
 
             self._recalc_application_status(to_continue)
@@ -93,7 +93,7 @@ class Command(BaseCommand):
     def _reverse(self):
         """continue → planned for migrated records (undo forward)."""
         tagged_continue = ApplicationOblastState.objects.filter(
-            status='continue',
+            status='in_trial',
             is_deleted=False,
             decision_justification__startswith=MIGRATED_TAG_PREFIX,
         )

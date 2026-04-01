@@ -41,12 +41,12 @@ def map_gosreestr_status(gos_status, receipt_date):
 
     Gosreestr 'testing' means trials are ongoing:
     - receipt_date >= 2026 → 'planned' (new apps, will be managed in Trials)
-    - receipt_date < 2026  → 'continue' (legacy ongoing trials)
+    - receipt_date < 2026  → 'in_trial' (legacy ongoing trials)
     """
     if gos_status == 'testing':
         if receipt_date and receipt_date.year >= 2026:
             return 'planned'
-        return 'continue'
+        return 'in_trial'
     return GOSREESTR_STATUS_MAP.get(gos_status, 'planned')
 
 

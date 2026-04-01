@@ -579,7 +579,7 @@ class ApplicationViewSet(viewsets.ModelViewSet):
               "region_id": 1,
               "region_name": "Алматинский ГСУ",
               "oblast_name": "Алматинская",
-              "status": "trial_created",
+              "status": "in_trial",
               "trial_id": 15,
               "trial_status": "active"
             },
@@ -846,21 +846,17 @@ class ApplicationViewSet(viewsets.ModelViewSet):
         """
         Ручное обновление статусов по областям.
 
-        - Для финальных статусов (approved/continue/rejected) также создаёт
+        - Для финальных статусов (approved/removed) также создаёт
           ApplicationDecisionHistory и пишет decision metadata в OblastState.
-        - Для возврата в ранние статусы (planned..decision_made) очищает
+        - Для возврата в ранние статусы (planned/in_trial) очищает
           decision metadata, чтобы не оставлять стейл от предыдущего решения.
         - trial и trial_plan никогда не затрагиваются.
 
         POST /api/applications/{id}/update-oblast-statuses/
         Body: { "statuses": [{ "oblast_id": 1, "status": "approved" }, ...] }
         """
-        DECISION_STATUSES = {'approved', 'continue', 'rejected', 'removed', 'withdrawn'}
-        PRE_DECISION_STATUSES = {
-            'planned', 'trial_plan_created', 'trial_created',
-            'trial_in_progress', 'trial_completed',
-            'decision_pending', 'decision_made',
-        }
+        DECISION_STATUSES = {'approved', 'removed'}
+        PRE_DECISION_STATUSES = {'planned', 'in_trial'}
 
         application = self.get_object()
         statuses = request.data.get('statuses', [])
@@ -933,7 +929,7 @@ class ApplicationViewSet(viewsets.ModelViewSet):
                         oblast_id=oblast_id,
                         year=effective_year,
                         defaults={
-                            'decision': new_status,
+                            'decision': 'rejected' if new_status == 'removed' else new_status,
                             'decision_date': effective_date,
                             'decision_justification': 'Ручное изменение статуса',
                             'decided_by': request.user,

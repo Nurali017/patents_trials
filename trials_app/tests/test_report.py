@@ -100,25 +100,25 @@ class ReportServiceTest(TestCase):
         self.assertEqual(rows[0]['continued']['total'], 0)
 
     def test_continued_statuses(self):
-        """planned, trial_created etc. → continued"""
+        """planned, in_trial → continued"""
         self._make_app(
             'APP-3', date(2024, 6, 1), 'Сорт 3',
-            oblast_statuses=[(self.oblast1, 'trial_completed', 2024)],
+            oblast_statuses=[(self.oblast1, 'in_trial', 2024)],
         )
 
         rows = build_applications_report_rows(Application.objects.all())
         self.assertEqual(rows[0]['continued']['total'], 1)
         self.assertEqual(rows[0]['included']['total'], 0)
 
-    def test_removed_and_rejected(self):
-        """removed and rejected both → removed bucket"""
+    def test_removed_statuses(self):
+        """removed → removed bucket"""
         self._make_app(
             'APP-4', date(2022, 1, 15), 'Сорт 4',
             oblast_statuses=[(self.oblast1, 'removed', 2022)],
         )
         self._make_app(
             'APP-5', date(2022, 4, 1), 'Сорт 5',
-            oblast_statuses=[(self.oblast1, 'rejected', 2022)],
+            oblast_statuses=[(self.oblast1, 'removed', 2022)],
         )
 
         rows = build_applications_report_rows(Application.objects.all())
