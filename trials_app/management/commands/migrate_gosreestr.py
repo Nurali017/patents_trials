@@ -60,6 +60,8 @@ class Command(BaseCommand):
         parser.add_argument('--sort-csv', required=True)
         parser.add_argument('--originator-csv', required=True)
         parser.add_argument('--created-by-id', type=int, default=3, help='User ID for created_by (default: 3=alim)')
+        parser.add_argument('--gosreestr-host', default='localhost', help='Gosreestr DB host (default: localhost)')
+        parser.add_argument('--gosreestr-port', type=int, default=5432, help='Gosreestr DB port (default: 5432)')
 
     def handle(self, *args, **options):
         self.dry_run = options['dry_run']
@@ -68,6 +70,8 @@ class Command(BaseCommand):
         self.sort_csv = options['sort_csv']
         self.originator_csv = options['originator_csv']
         self.created_by_id = options.get('created_by_id', 3)
+        self.gosreestr_host = options.get('gosreestr_host', 'localhost')
+        self.gosreestr_port = options.get('gosreestr_port', 5432)
 
         if self.dry_run:
             self.stdout.write(self.style.WARNING('=== DRY RUN ===\n'))
@@ -89,8 +93,8 @@ class Command(BaseCommand):
 
     def _gos_query(self, sql, params=None):
         conn = psycopg2.connect(
-            dbname='gosreestr', user='gosreestr', password='gosreestr',
-            host='localhost', port=5432,
+            dbname='gosreestr', user='admin', password='password',
+            host=self.gosreestr_host, port=self.gosreestr_port,
         )
         cur = conn.cursor()
         cur.execute(sql, params or [])
