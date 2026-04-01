@@ -855,7 +855,7 @@ class ApplicationViewSet(viewsets.ModelViewSet):
         POST /api/applications/{id}/update-oblast-statuses/
         Body: { "statuses": [{ "oblast_id": 1, "status": "approved" }, ...] }
         """
-        DECISION_STATUSES = {'approved', 'continue', 'rejected'}
+        DECISION_STATUSES = {'approved', 'continue', 'rejected', 'removed', 'withdrawn'}
         PRE_DECISION_STATUSES = {
             'planned', 'trial_plan_created', 'trial_created',
             'trial_in_progress', 'trial_completed',
@@ -897,6 +897,14 @@ class ApplicationViewSet(viewsets.ModelViewSet):
             for item in statuses:
                 oblast_id = item['oblast_id']
                 new_status = item['status']
+                custom_year = item.get('decision_year')
+                if custom_year is not None:
+                    try:
+                        custom_year = int(custom_year)
+                    except (ValueError, TypeError):
+                        custom_year = None
+                effective_year = custom_year or now.year
+
                 qs = ApplicationOblastState.objects.filter(
                     application=application,
                     oblast_id=oblast_id,
@@ -904,27 +912,29 @@ class ApplicationViewSet(viewsets.ModelViewSet):
                 )
 
                 if new_status in DECISION_STATUSES:
+                    from datetime import date as date_type
+                    effective_date = date_type(effective_year, 1, 1)
                     # Decision status: update status + decision metadata + create history
                     rows = qs.update(
                         status=new_status,
-                        decision_date=now.date(),
+                        decision_date=effective_date,
                         decision_justification='Ручное изменение статуса',
                         decided_by=request.user,
-                        decision_year=now.year,
+                        decision_year=effective_year,
                         updated_at=now,
                     )
                     years_tested = ApplicationDecisionHistory.objects.filter(
                         application=application,
                         oblast_id=oblast_id,
-                        year__lte=now.year,
-                    ).exclude(year=now.year).count() + 1
+                        year__lte=effective_year,
+                    ).exclude(year=effective_year).count() + 1
                     ApplicationDecisionHistory.objects.update_or_create(
                         application=application,
                         oblast_id=oblast_id,
-                        year=now.year,
+                        year=effective_year,
                         defaults={
                             'decision': new_status,
-                            'decision_date': now.date(),
+                            'decision_date': effective_date,
                             'decision_justification': 'Ручное изменение статуса',
                             'decided_by': request.user,
                             'years_tested_total': years_tested,
@@ -940,9 +950,6 @@ class ApplicationViewSet(viewsets.ModelViewSet):
                         decision_year=None,
                         updated_at=now,
                     )
-                else:
-                    # removed/withdrawn: update status only
-                    rows = qs.update(status=new_status, updated_at=now)
 
                 updated_count += rows
 
@@ -979,13 +986,22 @@ class ApplicationViewSet(viewsets.ModelViewSet):
         decision = request.data.get('decision')
         justification = request.data.get('justification', '')
         average_yield = request.data.get('average_yield')
-        
+        raw_decision_date = request.data.get('decision_date')
+
         if not all([oblast_id, year, decision]):
             return Response({
                 'success': False,
                 'error': 'oblast_id, year and decision are required'
             }, status=status.HTTP_400_BAD_REQUEST)
-        
+
+        parsed_decision_date = None
+        if raw_decision_date and isinstance(raw_decision_date, str):
+            from datetime import date as date_type
+            try:
+                parsed_decision_date = date_type.fromisoformat(raw_decision_date)
+            except ValueError:
+                pass
+
         try:
             oblast = Oblast.objects.get(id=oblast_id)
         except Oblast.DoesNotExist:
@@ -993,7 +1009,7 @@ class ApplicationViewSet(viewsets.ModelViewSet):
                 'success': False,
                 'error': f'Oblast {oblast_id} not found'
             }, status=status.HTTP_404_NOT_FOUND)
-        
+
         # Принять решение
         decision_history = application.make_decision(
             oblast=oblast,
@@ -1001,7 +1017,8 @@ class ApplicationViewSet(viewsets.ModelViewSet):
             decision=decision,
             justification=justification,
             decided_by=request.user,
-            average_yield=average_yield
+            average_yield=average_yield,
+            decision_date=parsed_decision_date,
         )
         
         return Response({
@@ -1044,6 +1061,7 @@ class ApplicationViewSet(viewsets.ModelViewSet):
         for record in history:
             history_data.append({
                 'id': record.id,
+                'oblast_id': record.oblast_id,
                 'oblast': record.oblast.name,
                 'year': record.year,
                 'decision': record.decision,
@@ -1061,6 +1079,137 @@ class ApplicationViewSet(viewsets.ModelViewSet):
             'sort_name': application.sort_record.name,
             'history': history_data
         })
+
+    @action(detail=True, methods=['patch'], url_path=r'edit-decision/(?P<history_id>\d+)')
+    def edit_decision(self, request, pk=None, history_id=None):
+        """
+        Редактировать решение в истории.
+
+        PATCH /api/applications/{id}/edit-decision/{history_id}/
+
+        Проходит через make_decision() для атомарного обновления
+        ApplicationDecisionHistory + ApplicationOblastState + Application.status.
+        """
+        application = self.get_object()
+
+        try:
+            record = ApplicationDecisionHistory.objects.get(
+                id=history_id, application=application,
+            )
+        except ApplicationDecisionHistory.DoesNotExist:
+            return Response(
+                {'success': False, 'error': 'Decision history record not found'},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        year = request.data.get('year', record.year)
+        decision = request.data.get('decision', record.decision)
+        justification = request.data.get('justification', record.decision_justification)
+        average_yield = request.data.get('average_yield', record.average_yield)
+        oblast_id = request.data.get('oblast_id', record.oblast_id)
+        raw_decision_date = request.data.get('decision_date')
+
+        parsed_decision_date = None
+        if raw_decision_date and isinstance(raw_decision_date, str):
+            from datetime import date as date_type
+            try:
+                parsed_decision_date = date_type.fromisoformat(raw_decision_date)
+            except ValueError:
+                pass
+
+        try:
+            oblast = Oblast.objects.get(id=oblast_id)
+        except Oblast.DoesNotExist:
+            return Response(
+                {'success': False, 'error': f'Oblast {oblast_id} not found'},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        # Если год или область изменились — удалить старую запись
+        if int(year) != record.year or int(oblast_id) != record.oblast_id:
+            record.delete()
+
+        decision_history = application.make_decision(
+            oblast=oblast,
+            year=int(year),
+            decision=decision,
+            justification=justification,
+            decided_by=request.user,
+            average_yield=average_yield,
+            decision_date=parsed_decision_date,
+        )
+
+        return Response({
+            'success': True,
+            'decision': {
+                'id': decision_history.id,
+                'oblast_id': oblast.id,
+                'oblast': oblast.name,
+                'year': decision_history.year,
+                'decision': decision_history.decision,
+                'decision_display': decision_history.get_decision_display(),
+                'decision_date': str(decision_history.decision_date),
+                'justification': decision_history.decision_justification,
+                'average_yield': decision_history.average_yield,
+                'years_tested_total': decision_history.years_tested_total,
+            },
+        })
+
+    @action(detail=True, methods=['delete'], url_path=r'delete-decision/(?P<history_id>\d+)')
+    def delete_decision(self, request, pk=None, history_id=None):
+        """
+        Удалить решение из истории.
+
+        DELETE /api/applications/{id}/delete-decision/{history_id}/
+
+        После удаления откатывает ApplicationOblastState на предыдущее решение.
+        Если истории не осталось — сбрасывает на 'planned'.
+        """
+        application = self.get_object()
+
+        try:
+            record = ApplicationDecisionHistory.objects.get(
+                id=history_id, application=application,
+            )
+        except ApplicationDecisionHistory.DoesNotExist:
+            return Response(
+                {'success': False, 'error': 'Decision history record not found'},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        oblast = record.oblast
+        record.delete()
+
+        # Откатить OblastState на предыдущее решение
+        previous = ApplicationDecisionHistory.objects.filter(
+            application=application, oblast=oblast,
+        ).order_by('-year').first()
+
+        if previous:
+            application.update_oblast_status(
+                oblast=oblast,
+                new_status=previous.decision,
+                decision_date=previous.decision_date,
+                decision_justification=previous.decision_justification,
+                decided_by=previous.decided_by,
+                decision_year=previous.year,
+            )
+        else:
+            # Нет истории — сбросить на planned, очистить decision metadata
+            ApplicationOblastState.objects.filter(
+                application=application, oblast=oblast, is_deleted=False,
+            ).update(
+                status='planned',
+                decision_date=None,
+                decision_justification=None,
+                decided_by=None,
+                decision_year=None,
+                updated_at=timezone.now(),
+            )
+
+        application._update_overall_status()
+
+        return Response({'success': True})
 
     @action(detail=False, methods=['get'], url_path='export')
     def export(self, request):

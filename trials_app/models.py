@@ -760,6 +760,8 @@ class ApplicationDecisionHistory(models.Model):
         ('continue', 'Продолжить испытания'),
         ('approved', 'Одобрено к включению в Госреестр'),
         ('rejected', 'Снять с испытаний'),
+        ('removed', 'Снят из Госреестра'),
+        ('withdrawn', 'Отозван заявителем'),
     ]
     
     application = models.ForeignKey(
@@ -1029,7 +1031,7 @@ class Application(SoftDeleteModel):
             defaults['decision_date'] = decision_date
         if decision_justification is not None:
             defaults['decision_justification'] = decision_justification
-        if decided_by is not None or new_status in ['approved', 'continue', 'rejected', 'decision_pending', 'decision_made']:
+        if decided_by is not None or new_status in ['approved', 'continue', 'rejected', 'removed', 'withdrawn', 'decision_pending', 'decision_made']:
             defaults['decided_by'] = decided_by
         if decision_year is not None:
             defaults['decision_year'] = decision_year
@@ -1118,23 +1120,27 @@ class Application(SoftDeleteModel):
         if self.pk:
             self.save(update_fields=['status', 'updated_at'])
     
-    def make_decision(self, oblast, year, decision, justification=None, decided_by=None, average_yield=None):
+    def make_decision(self, oblast, year, decision, justification=None, decided_by=None, average_yield=None, decision_date=None):
         """
         Принять решение по сорту в области за год
-        
+
         Args:
             oblast: Область
             year: Год решения
-            decision: Решение ('continue', 'approved', 'rejected')
+            decision: Решение ('continue', 'approved', 'rejected', 'removed', 'withdrawn')
             justification: Обоснование решения
             decided_by: Кто принял решение
             average_yield: Средняя урожайность за год (опционально)
-        
+            decision_date: Дата решения (по умолчанию — сегодня)
+
         Returns:
             ApplicationDecisionHistory: Созданная запись решения
         """
         from django.utils import timezone
-        
+
+        if decision_date is None:
+            decision_date = timezone.now().date()
+
         # Подсчитать общее количество лет испытаний
         years_tested = ApplicationDecisionHistory.objects.filter(
             application=self,
@@ -1149,7 +1155,7 @@ class Application(SoftDeleteModel):
             year=year,
             defaults={
                 'decision': decision,
-                'decision_date': timezone.now().date(),
+                'decision_date': decision_date,
                 'decision_justification': justification,
                 'decided_by': decided_by,
                 'average_yield': average_yield,
@@ -1160,12 +1166,12 @@ class Application(SoftDeleteModel):
         self.update_oblast_status(
             oblast=oblast,
             new_status=decision,
-            decision_date=timezone.now().date(),
+            decision_date=decision_date,
             decision_justification=justification,
             decided_by=decided_by,
             decision_year=year,
         )
-        
+
         return decision_history
     
     def get_decision_history(self, oblast=None):

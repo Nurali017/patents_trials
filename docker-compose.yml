@@ -55,6 +55,7 @@ services:
       PATENTS_SERVICE_URL: http://host.docker.internal:8000
       PATENTS_SERVICE_USERNAME: admin
       PATENTS_SERVICE_PASSWORD: ${PATENTS_SERVICE_PASSWORD:-changeme}
+      MEDIA_URL: ${MEDIA_URL:-/media/}
 
 volumes:
   trials_postgres_data:

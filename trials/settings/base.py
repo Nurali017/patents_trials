@@ -113,7 +113,7 @@ STATIC_ROOT = os.path.join(BASE_DIR, 'staticfiles')
 STATICFILES_STORAGE = 'whitenoise.storage.CompressedManifestStaticFilesStorage'
 
 MEDIA_BACKEND = os.environ.get('MEDIA_BACKEND', 'filesystem').strip().lower() or 'filesystem'
-MEDIA_URL = '/media/'
+MEDIA_URL = os.environ.get('MEDIA_URL', '/media/')
 MEDIA_ROOT = os.path.join(BASE_DIR, 'media')
 LEGACY_MEDIA_ROOT = os.environ.get('LEGACY_MEDIA_ROOT', MEDIA_ROOT)
 

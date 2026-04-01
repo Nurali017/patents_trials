@@ -378,22 +378,26 @@ class Command(BaseCommand):
         self.stdout.write(f'  Result: {created} created, {errors} errors')
 
     # ------------------------------------------------------------------
-    # Step 4: Create ApplicationDecisionHistory (APPROVED ONLY)
+    # Step 4: Create ApplicationDecisionHistory
     # ------------------------------------------------------------------
     def _step4_create_decision_history(self):
         self.stdout.write('\n--- Step 4: Create ApplicationDecisionHistory ---')
-        self.stdout.write('  NOTE: Only "approved" creates history. "removed" is NOT "rejected".')
-        self.stdout.write('  "removed" is a post-registry event, not a trial decision.')
+        self.stdout.write('  Statuses: approved → approved, removed → removed, withdrawn → withdrawn')
+
+        GOSREESTR_DECISION_MAP = {
+            'approved': 'approved',
+            'removed': 'removed',
+            'withdrawn': 'withdrawn',
+        }
 
         oblast_lookup = self._build_oblast_lookup()
 
-        # Only approved from Gosreestr
         gos_decisions = self._gos_query("""
             SELECT ar.application_id, ar.region_id, ar.status, ar.year
             FROM registry_applicationregion ar
-            WHERE ar.status = 'approved'
+            WHERE ar.status IN ('approved', 'removed', 'withdrawn')
         """)
-        self.stdout.write(f'  Gosreestr approved: {len(gos_decisions)}')
+        self.stdout.write(f'  Gosreestr decisions (approved+removed+withdrawn): {len(gos_decisions)}')
 
         gos_app_numbers = {}
         for gos_id, reg_num, _, _, _ in self._gos_query(
@@ -413,20 +417,23 @@ class Command(BaseCommand):
             app_number = gos_app_numbers.get(str(gos_app_id))
             application = app_lookup.get(app_number) if app_number else None
             oblast = oblast_lookup.get(str(gos_region_id))
+            decision = GOSREESTR_DECISION_MAP.get(gos_status)
 
-            if not application or not oblast:
+            if not application or not oblast or not decision:
                 errors += 1
                 continue
+
+            effective_year = year or 2020
 
             if not self.dry_run:
                 try:
                     ApplicationDecisionHistory.objects.get_or_create(
                         application=application,
                         oblast=oblast,
-                        year=year or 2020,
+                        year=effective_year,
                         defaults={
-                            'decision': 'approved',
-                            'decision_date': date(year or 2020, 1, 1),
+                            'decision': decision,
+                            'decision_date': date(effective_year, 1, 1),
                             'decision_justification': f'migrated_from_gosreestr:{gos_app_id}',
                             'years_tested_total': 1,
                         },
