@@ -1265,6 +1265,93 @@ class Application(SoftDeleteModel):
         
         return summary
 
+    def reset_linked_workflow(self, *, keep_oblast_states=True, preserve_decision_history=False):
+        """
+        Сбросить связанный workflow заявки.
+
+        При смене сорта или удалении заявки очищает:
+        - плановые распределения;
+        - участников испытаний, созданных по этой заявке;
+        - decision metadata по областям, если история решений не сохраняется.
+        """
+        from django.utils import timezone
+
+        now = timezone.now()
+        TrialParticipant.objects.filter(application=self).delete()
+        decision_history = ApplicationDecisionHistory.objects.filter(application=self)
+        latest_decisions_by_oblast = {}
+        if preserve_decision_history:
+            for record in decision_history.select_related('decided_by').order_by(
+                'oblast_id',
+                '-year',
+                '-decision_date',
+                '-id',
+            ):
+                latest_decisions_by_oblast.setdefault(record.oblast_id, record)
+        else:
+            decision_history.delete()
+        self.planned_distributions_records.filter(is_deleted=False).update(
+            is_deleted=True,
+            deleted_at=now,
+            updated_at=now,
+        )
+        if keep_oblast_states:
+            for state in self.oblast_states.filter(is_deleted=False):
+                latest_decision = latest_decisions_by_oblast.get(state.oblast_id)
+                state.trial_plan = None
+                state.trial = None
+                state.updated_at = now
+
+                if latest_decision is not None:
+                    state.status = latest_decision.decision
+                    state.decision_date = latest_decision.decision_date
+                    state.decision_justification = latest_decision.decision_justification
+                    state.decided_by = latest_decision.decided_by
+                    state.decision_year = latest_decision.year
+                else:
+                    state.status = 'planned'
+                    state.decision_date = None
+                    state.decision_justification = None
+                    state.decided_by = None
+                    state.decision_year = None
+
+                state.save(
+                    update_fields=[
+                        'status',
+                        'trial_plan',
+                        'trial',
+                        'decision_date',
+                        'decision_justification',
+                        'decided_by',
+                        'decision_year',
+                        'updated_at',
+                    ]
+                )
+            self._update_overall_status()
+        else:
+            self.oblast_states.filter(is_deleted=False).update(
+                is_deleted=True,
+                deleted_at=now,
+                updated_at=now,
+            )
+
+    def delete(self, using=None, keep_parents=False):
+        """
+        Мягко удалить заявку вместе с зависимыми soft-delete сущностями.
+        """
+        from django.db import transaction
+        from django.utils import timezone
+
+        with transaction.atomic():
+            now = timezone.now()
+            self.documents.filter(is_deleted=False).update(
+                is_deleted=True,
+                deleted_at=now,
+            )
+            self.reset_linked_workflow(keep_oblast_states=False)
+            self.target_oblasts.clear()
+            super().delete(using=using, keep_parents=keep_parents)
+
 
 class ApplicationOblastState(SoftDeleteModel):
     """

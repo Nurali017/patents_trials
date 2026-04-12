@@ -506,34 +506,22 @@ class ApplicationSerializer(serializers.ModelSerializer):
 
         return data
 
-    def _validate_sort_change(self, data):
+    def _is_sort_change_requested(self, data):
         current_patents_sort_id = getattr(self.instance.sort_record, 'sort_id', None)
         next_patents_sort_id = data.get('sort_id')
         next_sort_record = data.get('sort_record')
 
-        sort_changed = False
         if next_patents_sort_id is not None:
-            sort_changed = next_patents_sort_id != current_patents_sort_id
-        elif next_sort_record is not None:
-            sort_changed = next_sort_record.id != self.instance.sort_record_id
+            return next_patents_sort_id != current_patents_sort_id
+        if next_sort_record is not None:
+            return next_sort_record.id != self.instance.sort_record_id
+        return False
 
-        if not sort_changed:
+    def _validate_sort_change(self, data):
+        if not self._is_sort_change_requested(data):
             return
-
-        blockers = []
-        if self.instance.trial_participations.filter(is_deleted=False).exists():
-            blockers.append('по заявке уже созданы связанные испытания')
-        if ApplicationDecisionHistory.objects.filter(application=self.instance).exists():
-            blockers.append('по заявке уже есть история решений')
-
-        if blockers:
-            raise serializers.ValidationError({
-                'sort_id': (
-                    'Нельзя изменить сорт: '
-                    + '; '.join(blockers)
-                    + '.'
-                )
-            })
+        # Смена сорта разрешена даже при существующем workflow:
+        # связанный прогресс будет очищен в update().
 
     def _validate_removed_target_oblasts(self, data):
         if 'target_oblasts' not in data:
@@ -547,6 +535,9 @@ class ApplicationSerializer(serializers.ModelSerializer):
         removed_oblast_ids = current_oblast_ids - next_oblast_ids
 
         if not removed_oblast_ids:
+            return
+
+        if self._is_sort_change_requested(data):
             return
 
         blocked_oblast_ids = set(
@@ -625,6 +616,7 @@ class ApplicationSerializer(serializers.ModelSerializer):
         from datetime import timedelta
         from django.utils import timezone as django_timezone
 
+        previous_sort_record_id = instance.sort_record_id
         previous_target_oblast_ids = set(instance.target_oblasts.values_list('id', flat=True))
         
         sort_id = validated_data.pop('sort_id', None)
@@ -652,6 +644,10 @@ class ApplicationSerializer(serializers.ModelSerializer):
             validated_data['sort_record'] = sort_record
         
         instance = super().update(instance, validated_data)
+        sort_changed = previous_sort_record_id != instance.sort_record_id
+        if sort_changed:
+            instance.reset_linked_workflow(preserve_decision_history=True)
+
         current_target_oblast_ids = set(instance.target_oblasts.values_list('id', flat=True))
         removed_oblast_ids = previous_target_oblast_ids - current_target_oblast_ids
         if removed_oblast_ids:

@@ -280,8 +280,22 @@ class ApplicationEditTests(APITestCase):
         self.assertEqual(application.purpose, 'Updated purpose')
         self.assertEqual(application.sort_record_id, self.sort_record.id)
 
-    def test_update_application_blocks_sort_change_when_trial_participant_exists(self):
+    def test_update_application_allows_sort_change_and_keeps_decision_history_when_trials_exist(self):
         application = self._create_application()
+        application.make_decision(
+            oblast=self.oblast,
+            year=2026,
+            decision='approved',
+            justification='Legacy decision',
+            decided_by=self.user,
+            decision_date=date(2026, 10, 5),
+        )
+        distribution = PlannedDistribution.objects.create(
+            application=application,
+            region=self.region,
+            trial_type=self.trial_type,
+            created_by=self.user,
+        )
         trial = Trial.objects.create(
             region=self.region,
             trial_type=self.trial_type,
@@ -291,7 +305,7 @@ class ApplicationEditTests(APITestCase):
             status='active',
             created_by=self.user,
         )
-        TrialParticipant.objects.create(
+        participant = TrialParticipant.objects.create(
             trial=trial,
             sort_record=self.sort_record,
             application=application,
@@ -308,20 +322,34 @@ class ApplicationEditTests(APITestCase):
             format='json',
         )
 
-        self.assertEqual(response.status_code, 400, response.data)
-        self.assertIn('sort_id', response.data)
+        self.assertEqual(response.status_code, 200, response.data)
         application.refresh_from_db()
-        self.assertEqual(application.sort_record_id, self.sort_record.id)
+        distribution.refresh_from_db()
 
-    def test_update_application_blocks_sort_change_when_decision_history_exists(self):
+        self.assertEqual(application.sort_record_id, self.second_sort_record.id)
+        history = ApplicationDecisionHistory.objects.get(application=application, oblast=self.oblast, year=2026)
+        self.assertEqual(history.decision, 'approved')
+        self.assertTrue(distribution.is_deleted)
+        self.assertFalse(TrialParticipant.objects.filter(id=participant.id).exists())
+
+        oblast_state = application.oblast_states.get(oblast=self.oblast, is_deleted=False)
+        self.assertEqual(oblast_state.status, 'approved')
+        self.assertIsNone(oblast_state.trial_id)
+        self.assertEqual(oblast_state.decision_date, date(2026, 10, 5))
+        self.assertEqual(oblast_state.decision_justification, 'Legacy decision')
+        self.assertEqual(oblast_state.decided_by_id, self.user.id)
+        self.assertEqual(oblast_state.decision_year, 2026)
+        self.assertEqual(application.status, 'registered')
+
+    def test_update_application_allows_sort_change_and_keeps_decision_history_when_no_trials(self):
         application = self._create_application()
-        ApplicationDecisionHistory.objects.create(
-            application=application,
+        application.make_decision(
             oblast=self.oblast,
             year=2026,
             decision='approved',
+            justification='Legacy decision',
+            decided_by=self.user,
             decision_date=date(2026, 10, 5),
-            years_tested_total=1,
         )
 
         response = self.client.put(
@@ -333,8 +361,20 @@ class ApplicationEditTests(APITestCase):
             format='json',
         )
 
-        self.assertEqual(response.status_code, 400, response.data)
-        self.assertIn('sort_id', response.data)
+        self.assertEqual(response.status_code, 200, response.data)
+        application.refresh_from_db()
+        self.assertEqual(application.sort_record_id, self.second_sort_record.id)
+        history = ApplicationDecisionHistory.objects.get(application=application, oblast=self.oblast, year=2026)
+        self.assertEqual(history.decision, 'approved')
+
+        oblast_state = application.oblast_states.get(oblast=self.oblast, is_deleted=False)
+        self.assertEqual(oblast_state.status, 'approved')
+        self.assertIsNone(oblast_state.trial_id)
+        self.assertEqual(oblast_state.decision_date, date(2026, 10, 5))
+        self.assertEqual(oblast_state.decision_justification, 'Legacy decision')
+        self.assertEqual(oblast_state.decided_by_id, self.user.id)
+        self.assertEqual(oblast_state.decision_year, 2026)
+        self.assertEqual(application.status, 'registered')
 
     def test_update_application_blocks_removing_oblast_with_planned_distribution(self):
         application = self._create_application(target_oblasts=[self.oblast, self.second_oblast])
@@ -376,6 +416,101 @@ class ApplicationEditTests(APITestCase):
             {self.oblast.id, self.second_oblast.id},
         )
         self.assertTrue(application.oblast_states.filter(oblast=self.second_oblast, is_deleted=False).exists())
+
+    def test_delete_application_soft_deletes_related_records_when_no_trials(self):
+        application = self._create_application()
+        application.make_decision(
+            oblast=self.oblast,
+            year=2026,
+            decision='approved',
+            justification='Ready for cleanup',
+            decided_by=self.user,
+            decision_date=date(2026, 10, 5),
+        )
+        distribution = PlannedDistribution.objects.create(
+            application=application,
+            region=self.region,
+            trial_type=self.trial_type,
+            created_by=self.user,
+        )
+        document = Document.objects.create(
+            title='Application',
+            document_type='application_for_testing',
+            application=application,
+            uploaded_by=self.user,
+            is_mandatory=True,
+            file=SimpleUploadedFile('application.pdf', b'application', content_type='application/pdf'),
+        )
+
+        response = self.client.delete(f'/api/applications/{application.id}/')
+
+        self.assertEqual(response.status_code, 204, response.data)
+        application.refresh_from_db()
+        distribution.refresh_from_db()
+        document.refresh_from_db()
+
+        self.assertTrue(application.is_deleted)
+        self.assertEqual(application.target_oblasts.count(), 0)
+        self.assertFalse(ApplicationDecisionHistory.objects.filter(application=application).exists())
+        self.assertTrue(distribution.is_deleted)
+        self.assertTrue(document.is_deleted)
+        self.assertFalse(application.oblast_states.filter(is_deleted=False).exists())
+
+    def test_delete_application_soft_deletes_related_records_when_trials_exist(self):
+        application = self._create_application()
+        application.make_decision(
+            oblast=self.oblast,
+            year=2026,
+            decision='approved',
+            justification='Ready for cleanup',
+            decided_by=self.user,
+            decision_date=date(2026, 10, 5),
+        )
+        distribution = PlannedDistribution.objects.create(
+            application=application,
+            region=self.region,
+            trial_type=self.trial_type,
+            created_by=self.user,
+        )
+        document = Document.objects.create(
+            title='Application',
+            document_type='application_for_testing',
+            application=application,
+            uploaded_by=self.user,
+            is_mandatory=True,
+            file=SimpleUploadedFile('application-with-trial.pdf', b'application', content_type='application/pdf'),
+        )
+        trial = Trial.objects.create(
+            region=self.region,
+            trial_type=self.trial_type,
+            culture=self.culture,
+            start_date=date(2026, 5, 1),
+            year=2026,
+            status='active',
+            created_by=self.user,
+        )
+        participant = TrialParticipant.objects.create(
+            trial=trial,
+            sort_record=self.sort_record,
+            application=application,
+            statistical_group=1,
+            participant_number=1,
+        )
+
+        response = self.client.delete(f'/api/applications/{application.id}/')
+
+        self.assertEqual(response.status_code, 204, response.data)
+        application.refresh_from_db()
+        distribution.refresh_from_db()
+        document.refresh_from_db()
+
+        self.assertTrue(application.is_deleted)
+        self.assertEqual(application.target_oblasts.count(), 0)
+        self.assertFalse(ApplicationDecisionHistory.objects.filter(application=application).exists())
+        self.assertTrue(distribution.is_deleted)
+        self.assertTrue(document.is_deleted)
+        self.assertFalse(application.oblast_states.filter(is_deleted=False).exists())
+        self.assertFalse(TrialParticipant.objects.filter(id=participant.id).exists())
 
     def test_document_update_changes_metadata_and_replaces_file(self):
         application = self._create_application()

@@ -94,6 +94,10 @@ class ApplicationViewSet(viewsets.ModelViewSet):
         """При создании заявки устанавливаем created_by"""
         serializer.save(created_by=self.request.user if self.request.user.is_authenticated else None)
 
+    def perform_destroy(self, instance):
+        """Мягко удалить заявку вместе со связанным workflow."""
+        instance.delete()
+
     @staticmethod
     def _cleanup_saved_files(saved_files):
         for storage, file_name in reversed(saved_files):
@@ -1284,4 +1288,3 @@ class ApplicationViewSet(viewsets.ModelViewSet):
         )
         response['Content-Disposition'] = f'attachment; filename="{filename}"'
         return response
-
