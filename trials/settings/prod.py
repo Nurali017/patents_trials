@@ -11,11 +11,14 @@ DEBUG = False
 ALLOWED_HOSTS = [
     h.strip() for h in os.environ.get('ALLOWED_HOSTS', '').split(',') if h.strip()
 ]
-# Internal Docker service name — used by patents-web for the rename webhook.
-# The hostname is not routable from outside the patents_shared network, so
-# allowing it here is safe.
-if 'trials_service' not in ALLOWED_HOSTS:
-    ALLOWED_HOSTS.append('trials_service')
+# Internal hostname used by patents-web for the rename webhook.
+# Django rejects HTTP_HOST values violating RFC 1034/1035 (e.g. the docker
+# service name "trials_service" with an underscore) before consulting
+# ALLOWED_HOSTS, so the Patents service overrides Host: with this label.
+# It is not routable from outside the patents_shared docker network.
+for internal_host in ('trials_service', 'trials.local'):
+    if internal_host not in ALLOWED_HOSTS:
+        ALLOWED_HOSTS.append(internal_host)
 
 # Database — all credentials from environment, no fallbacks
 DATABASES = {
