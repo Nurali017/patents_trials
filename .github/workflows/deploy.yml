@@ -21,6 +21,8 @@ jobs:
           TRIALS_ENV_APP: ${{ secrets.TRIALS_ENV_APP }}
           TRIALS_ENV_DB: ${{ secrets.TRIALS_ENV_DB }}
           TRIALS_WEBHOOK_TOKEN: ${{ secrets.TRIALS_WEBHOOK_TOKEN }}
+          PATENTS_SERVICE_USERNAME: ${{ secrets.PATENTS_SERVICE_USERNAME }}
+          PATENTS_SERVICE_PASSWORD: ${{ secrets.PATENTS_SERVICE_PASSWORD }}
         run: |
           set -eu
           mkdir -p .deploy/trials
@@ -30,6 +32,14 @@ jobs:
           fi
           if [ -n "${TRIALS_WEBHOOK_TOKEN:-}" ]; then
             printf 'TRIALS_WEBHOOK_TOKEN=%s\n' "$TRIALS_WEBHOOK_TOKEN" >> .deploy/trials/app
+          fi
+          if [ -n "${PATENTS_SERVICE_USERNAME:-}" ]; then
+            sed -i "/^PATENTS_SERVICE_USERNAME=/d" .deploy/trials/app
+            printf 'PATENTS_SERVICE_USERNAME=%s\n' "$PATENTS_SERVICE_USERNAME" >> .deploy/trials/app
+          fi
+          if [ -n "${PATENTS_SERVICE_PASSWORD:-}" ]; then
+            sed -i "/^PATENTS_SERVICE_PASSWORD=/d" .deploy/trials/app
+            printf 'PATENTS_SERVICE_PASSWORD=%s\n' "$PATENTS_SERVICE_PASSWORD" >> .deploy/trials/app
           fi
           printf '%s' "$TRIALS_ENV_DB" > .deploy/trials/db
 
