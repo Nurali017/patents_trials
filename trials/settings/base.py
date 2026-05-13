@@ -126,6 +126,8 @@ MINIO_PRESIGNED_URL_EXPIRY_SECONDS = int(
     os.environ.get('MINIO_PRESIGNED_URL_EXPIRY_SECONDS', '600')
 )
 
+TRIALS_WEBHOOK_TOKEN = os.environ.get('TRIALS_WEBHOOK_TOKEN', '')
+
 if MEDIA_BACKEND == 'minio':
     DEFAULT_FILE_STORAGE = 'trials_app.storage.MinioMediaStorage'
 
