@@ -1,6 +1,7 @@
 from django.urls import path, include
 from rest_framework.routers import DefaultRouter
 from . import views, auth_views
+from .views.internal_sort import InternalSortByPatentIdView
 
 router = DefaultRouter()
 # Роутер для оригинаторов в patents
@@ -69,4 +70,11 @@ urlpatterns = [
     path('patents/sorts/', views.get_sorts, name='get-sorts'),
     path('patents/sorts/create/', views.create_sort, name='create-sort'),
     path('patents/sorts/<int:sort_id>/', views.get_sort_detail, name='get-sort-detail'),
+
+    # === Внутренние webhook'и (service-to-service) ===
+    path(
+        'internal/sorts/by-patent-id/<int:patent_sort_id>/',
+        InternalSortByPatentIdView.as_view(),
+        name='internal-sort-by-patent-id',
+    ),
 ]
