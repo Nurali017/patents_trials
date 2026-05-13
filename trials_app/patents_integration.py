@@ -595,12 +595,11 @@ class PatentsServiceClient:
         Returns:
             list: Список ВСЕХ сортов
         """
-        # Пробуем разные варианты endpoint
-        endpoints_to_try = [
-            '/sorts/',          # v2 endpoint с пагинацией
-            '/sorts/all/',      # v2 endpoint без пагинации (если есть)
-        ]
-        
+        # /sorts/all/ exists only on v1; on v2 it 404s. /sorts/ already
+        # paginates correctly via the loop below, so a single endpoint is
+        # enough.
+        endpoints_to_try = ['/sorts/']
+
         for endpoint in endpoints_to_try:
             data = self._make_request('GET', endpoint, params=params)
             if data is not None:
