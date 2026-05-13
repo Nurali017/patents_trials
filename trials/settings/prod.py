@@ -11,6 +11,11 @@ DEBUG = False
 ALLOWED_HOSTS = [
     h.strip() for h in os.environ.get('ALLOWED_HOSTS', '').split(',') if h.strip()
 ]
+# Internal Docker service name — used by patents-web for the rename webhook.
+# The hostname is not routable from outside the patents_shared network, so
+# allowing it here is safe.
+if 'trials_service' not in ALLOWED_HOSTS:
+    ALLOWED_HOSTS.append('trials_service')
 
 # Database — all credentials from environment, no fallbacks
 DATABASES = {
