@@ -26,6 +26,16 @@ import logging
 logger = logging.getLogger(__name__)
 
 
+class PatentsServiceHTTPError(Exception):
+    """Structured error returned by Patents Service."""
+
+    def __init__(self, status_code, payload, text=''):
+        self.status_code = status_code
+        self.payload = payload
+        self.text = text
+        super().__init__(f'Patents Service returned HTTP {status_code}')
+
+
 class PatentsServiceClient:
     """
     HTTP клиент для взаимодействия с Patents Service API
@@ -137,6 +147,7 @@ class PatentsServiceClient:
         """
         url = f"{self.api_url}{endpoint}"
         kwargs.setdefault('timeout', self.timeout)
+        raise_errors = kwargs.pop('raise_errors', False)
         
         # Добавляем заголовки с токеном
         headers = self._get_headers(kwargs.pop('headers', None))
@@ -171,10 +182,22 @@ class PatentsServiceClient:
                 return response_data
             else:
                 logger.error(f"Ошибка HTTP {response.status_code}: {response.text}")
+                if raise_errors:
+                    try:
+                        error_payload = response.json()
+                    except ValueError:
+                        error_payload = {}
+                    raise PatentsServiceHTTPError(
+                        response.status_code,
+                        error_payload,
+                        response.text,
+                    )
                 response.raise_for_status()
             
         except requests.exceptions.RequestException as e:
             logger.error(f"Ошибка при запросе к Patents Service ({url}): {e}")
+            if raise_errors:
+                raise
             return None
     
     def get_sort(self, sort_id):
@@ -651,7 +674,7 @@ class PatentsServiceClient:
         Returns:
             dict или None: Созданный сорт
         """
-        return self._make_request('POST', '/sorts/', json=sort_data)
+        return self._make_request('POST', '/sorts/', json=sort_data, raise_errors=True)
     
     def update_sort(self, sort_id, sort_data):
         """
