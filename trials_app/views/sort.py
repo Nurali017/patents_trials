@@ -3,12 +3,14 @@ Sort ViewSets
 """
 from rest_framework import viewsets, permissions, status
 from rest_framework.decorators import action
+from rest_framework.exceptions import ValidationError
 from rest_framework.response import Response
 from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework.filters import SearchFilter, OrderingFilter
 from django.utils import timezone
 from django.db import models as django_models
 from django.db.models import Q
+import requests
 
 from ..models import (
     Oblast, Region, ClimateZone, Indicator, GroupCulture, Culture,
@@ -28,7 +30,7 @@ from ..serializers import (
     TrialPlanAddCultureSerializer, create_basic_trial_results,
     create_quality_trial_results
 )
-from ..patents_integration import patents_api
+from ..patents_integration import PatentsServiceHTTPError, patents_api
 from ..filters import OriginatorFilter
 import logging
 
@@ -242,8 +244,32 @@ class SortRecordViewSet(viewsets.ModelViewSet):
         
         logger.info(f"Данные для Patents Service: {patents_data}")
         
-        # Создаем в Patents Service
-        patents_sort = patents_api.create_sort(patents_data)
+        try:
+            patents_sort = patents_api.create_sort(patents_data)
+        except PatentsServiceHTTPError as exc:
+            logger.warning(
+                "Не удалось создать сорт в Patents Service: status=%s payload=%s",
+                exc.status_code,
+                exc.payload,
+            )
+            details = exc.payload.get('details') if isinstance(exc.payload, dict) else None
+            field = details.get('field') if isinstance(details, dict) else None
+            message = (
+                exc.payload.get('message')
+                if isinstance(exc.payload, dict)
+                else None
+            ) or 'Не удалось создать сорт в реестре сортов'
+
+            if field:
+                raise ValidationError({field: [message]})
+            raise ValidationError({'non_field_errors': [message]})
+        except requests.exceptions.RequestException:
+            logger.exception("Patents Service unavailable while creating sort")
+            raise ValidationError({
+                'non_field_errors': [
+                    'Реестр сортов временно недоступен. Попробуйте позже.'
+                ]
+            })
         
         logger.info(f"Ответ от Patents Service: {patents_sort}")
         
@@ -263,24 +289,9 @@ class SortRecordViewSet(viewsets.ModelViewSet):
             self._handle_originators(sort, originators_data)
 
             return sort
-        else:
-            # Если не удалось создать в Patents Service, создаем только локально
-            # с временным sort_id (будет обновлен при синхронизации)
-            logger.warning("Не удалось создать сорт в Patents Service, создаем локально")
-            import random
-            temp_id = random.randint(100000, 999999)
-            sort = serializer.save(
-                sort_id=temp_id,
-                synced_at=None
-            )
-
-            logger.info(f"Сорт создан локально с временным ID: {sort.id}, temp Patents ID: {sort.sort_id}")
-
-            # Обрабатываем оригинаторов даже при локальном создании
-            originators_data = self.request.data.get('originators', [])
-            self._handle_originators(sort, originators_data)
-            
-            return sort
+        raise ValidationError({
+            'non_field_errors': ['Не удалось создать сорт в реестре сортов']
+        })
     
     def _handle_originators(self, sort_record, originators_data):
         """
@@ -560,7 +571,5 @@ class SortRecordViewSet(viewsets.ModelViewSet):
                 )
 
         return Response(SortRecordSerializer(sort_record).data)
-
-
 
 
