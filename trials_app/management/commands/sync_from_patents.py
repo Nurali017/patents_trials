@@ -161,11 +161,22 @@ class Command(BaseCommand):
                         self.stats['cultures']['skipped'] += 1
                         continue
                     
-                    # Получаем группу культуры
+                    # Получаем группу культуры.
+                    # Patents API (CultureSerializer) отдаёт группу под ключом 'group'
+                    # как вложенный объект {id, name, ...}. Ранее читался неверный
+                    # ключ 'group_culture' → группа не проставлялась (206/207 NULL).
+                    # Поддерживаем 'group' (объект/id), 'group_id' и legacy 'group_culture'.
                     group_culture = None
-                    if culture_data.get('group_culture'):
+                    group_data = culture_data.get('group') or culture_data.get('group_culture')
+                    if isinstance(group_data, dict):
+                        patents_group_id = group_data.get('id')
+                    else:
+                        patents_group_id = group_data
+                    if not patents_group_id:
+                        patents_group_id = culture_data.get('group_id')
+                    if patents_group_id:
                         group_culture = GroupCulture.objects.filter(
-                            group_culture_id=culture_data['group_culture'].get('id')
+                            group_culture_id=patents_group_id
                         ).first()
                     
                     culture, created = Culture.objects.get_or_create(
