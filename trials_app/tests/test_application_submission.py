@@ -7,6 +7,7 @@ from unittest.mock import patch
 from urllib.parse import urlsplit
 
 from django.contrib.auth import get_user_model
+from django.db import IntegrityError, transaction
 from django.core.management import call_command
 from django.test import override_settings
 from django.utils import timezone
@@ -159,6 +160,26 @@ class ApplicationSubmissionTests(APITestCase):
         self.assertEqual(Application.objects.count(), applications_before)
         self.assertEqual(Document.objects.count(), documents_before)
         self.assertFalse(Application.objects.filter(application_number='APP-2026-ROLLBACK').exists())
+
+    def test_deleted_application_number_can_be_reused(self):
+        deleted_application = self._create_application('APP-REUSED-001')
+        deleted_application.delete()
+
+        reused_application = self._create_application('APP-REUSED-001')
+
+        self.assertNotEqual(reused_application.id, deleted_application.id)
+        self.assertFalse(reused_application.is_deleted)
+        self.assertEqual(
+            Application.objects.filter(application_number='APP-REUSED-001').count(),
+            2,
+        )
+
+    def test_active_application_number_stays_unique(self):
+        self._create_application('APP-ACTIVE-UNIQUE')
+
+        with self.assertRaises(IntegrityError):
+            with transaction.atomic():
+                self._create_application('APP-ACTIVE-UNIQUE')
 
 
 class ApplicationEditTests(APITestCase):

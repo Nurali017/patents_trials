@@ -873,7 +873,6 @@ class Application(SoftDeleteModel):
     
     application_number = models.CharField(
         max_length=100, 
-        unique=True,
         help_text="Уникальный номер заявки (например, APP-2025-001)"
     )
     submission_date = models.DateField(
@@ -959,6 +958,13 @@ class Application(SoftDeleteModel):
         verbose_name = "Заявка на испытание"
         verbose_name_plural = "Заявки на испытания"
         ordering = ['-submission_date', '-created_at']
+        constraints = [
+            models.UniqueConstraint(
+                fields=['application_number'],
+                condition=models.Q(is_deleted=False),
+                name='uniq_active_application_number',
+            ),
+        ]
     
     def __str__(self):
         return f"{self.application_number} - {self.sort_record.name}"
